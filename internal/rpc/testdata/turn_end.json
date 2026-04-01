@@ -1,0 +1,1 @@
+{"type":"turn_end","message":{"role":"assistant"},"toolResults":[{"toolCallId":"call_1","content":[{"type":"text","text":"ok"}]}]}

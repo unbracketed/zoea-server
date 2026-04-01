@@ -1,0 +1,1 @@
+{"type":"message_update","message":{},"assistantMessageEvent":{"type":"toolcall_delta","contentIndex":1,"delta":"{\"command\":\"ls","partial":{}}}

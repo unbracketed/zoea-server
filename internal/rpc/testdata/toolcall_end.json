@@ -1,0 +1,1 @@
+{"type":"message_update","message":{},"assistantMessageEvent":{"type":"toolcall_end","contentIndex":1,"toolCall":{"id":"call_123","name":"bash","arguments":{"command":"ls -la"}},"partial":{}}}
