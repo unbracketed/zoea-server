@@ -1,39 +1,69 @@
-# Go Agent Gateway (Scaffold)
+# Go Agent Gateway
 
-Scaffold implementation for a gateway that bridges HTTP/WebSocket clients to `pi --mode rpc` subprocesses.
+HTTP/WebSocket gateway that bridges clients to `pi --mode rpc` agent subprocesses. Create sessions, send prompts, stream events — all over a REST API.
 
-## Current state
-
-This scaffold includes:
-- project layout
-- config wiring
-- HTTP API skeleton
-- in-memory session manager
-- **real Pi RPC subprocess manager** (`pi --mode rpc`)
-- JSONL RPC reader/writer with command `id` correlation
-- websocket stream endpoint for raw agent events
-
-Still TODO:
-- persistence backend
-- JWT auth / per-user ACL middleware
-- normalized event mapping (currently forwards raw event payload)
-
-## Run
+## Quick start
 
 ```bash
-cd go-agent-gateway
 go run ./cmd/gateway
 ```
 
-Server default: `:8080`
+No config needed for local dev. The gateway starts on `:8080` with full access from localhost.
 
-## Endpoints (scaffold)
+```bash
+# Create a session
+curl -s localhost:8080/v1/sessions -H "Content-Type: application/json" \
+  -d '{"user_id": "me"}' | jq
 
-- `POST /v1/sessions`
-- `GET /v1/sessions/{id}/state`
-- `GET /v1/sessions/{id}/messages`
-- `POST /v1/sessions/{id}/messages`
-- `POST /v1/sessions/{id}/abort`
-- `GET /v1/sessions/{id}/stream` (WebSocket)
-- `DELETE /v1/sessions/{id}`
-- `GET /healthz`
+# Send a prompt
+curl -s localhost:8080/v1/sessions/s_000001/messages -H "Content-Type: application/json" \
+  -d '{"message": "Hello"}' | jq
+
+# Stream events
+npx wscat -c ws://localhost:8080/v1/sessions/s_000001/stream
+```
+
+## With auth
+
+```bash
+AUTH_API_KEYS="myapp:sk_secret:admin" go run ./cmd/gateway
+```
+
+Then pass `Authorization: Bearer sk_secret` on all requests.
+
+## Endpoints
+
+| Method | Path | Scope | Description |
+|---|---|---|---|
+| `GET` | `/healthz` | public | Health check |
+| `GET` | `/readyz` | public | Readiness check |
+| `POST` | `/v1/sessions` | `sessions.write` | Create session |
+| `GET` | `/v1/sessions/{id}/state` | `sessions.read` | Get session state |
+| `GET` | `/v1/sessions/{id}/messages` | `sessions.read` | Get message history |
+| `POST` | `/v1/sessions/{id}/messages` | `sessions.write` | Send prompt |
+| `POST` | `/v1/sessions/{id}/abort` | `sessions.write` | Abort operation |
+| `GET` | `/v1/sessions/{id}/stream` | `sessions.read` | WebSocket event stream |
+| `DELETE` | `/v1/sessions/{id}` | `sessions.write` | Delete session |
+
+## Documentation
+
+- [Quickstart](docs/quickstart.md) — get running in under a minute
+- [API Endpoints](docs/endpoints.md) — full endpoint reference
+- [Authentication](docs/authentication.md) — auth modes, scopes, API keys, proxy setup
+
+## Configuration
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `GATEWAY_LISTEN_ADDR` | Listen address | `:8080` |
+| `PI_BIN_PATH` | Path to `pi` binary | `pi` |
+| `PI_DEFAULT_ARGS` | Default args for pi subprocess | `--mode rpc --no-session` |
+| `SESSIONS_BASE_DIR` | Working directory for sessions | `./.gateway-sessions` |
+| `AUTH_API_KEYS` | API keys (enables auth) | empty |
+| `GATEWAY_BEHIND_PROXY` | Treat all connections as remote | empty |
+
+## Tests
+
+```bash
+go test ./...
+```
