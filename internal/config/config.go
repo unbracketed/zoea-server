@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"strings"
+
+	"github.com/brian/go-agent-gateway/internal/auth"
 )
 
 type Config struct {
@@ -10,6 +12,7 @@ type Config struct {
 	PiBinPath       string
 	PiArgs          []string
 	SessionsBaseDir string
+	Auth            auth.AuthConfig
 }
 
 func LoadFromEnv() Config {
@@ -18,6 +21,13 @@ func LoadFromEnv() Config {
 		PiBinPath:       envOrDefault("PI_BIN_PATH", "pi"),
 		PiArgs:          splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc --no-session")),
 		SessionsBaseDir: envOrDefault("SESSIONS_BASE_DIR", "./.gateway-sessions"),
+		Auth: auth.AuthConfig{
+			APIKeys:     auth.ParseAPIKeys(os.Getenv("AUTH_API_KEYS")),
+			JWKSUrl:     os.Getenv("AUTH_JWKS_URL"),
+			JWTIssuer:   os.Getenv("AUTH_JWT_ISSUER"),
+			JWTAudience: os.Getenv("AUTH_JWT_AUDIENCE"),
+			BehindProxy: os.Getenv("GATEWAY_BEHIND_PROXY") != "",
+		},
 	}
 }
 

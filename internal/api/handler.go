@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/brian/go-agent-gateway/internal/auth"
 	"github.com/brian/go-agent-gateway/internal/process"
 	"github.com/brian/go-agent-gateway/internal/session"
 	// gateway import not needed — events arrive fully typed from session.Subscribe
@@ -44,6 +45,9 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
+		return
+	}
+	if !h.requireScope(w, r, "sessions.write") {
 		return
 	}
 
@@ -92,6 +96,9 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case action == "" && r.Method == http.MethodDelete:
+		if !h.requireScope(w, r, "sessions.write") {
+			return
+		}
 		err := h.sessions.Delete(r.Context(), sessionID)
 		if err != nil {
 			h.writeSessionErr(w, err)
@@ -101,6 +108,9 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case action == "state" && r.Method == http.MethodGet:
+		if !h.requireScope(w, r, "sessions.read") {
+			return
+		}
 		st, err := s.State(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -110,6 +120,9 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case action == "messages" && r.Method == http.MethodGet:
+		if !h.requireScope(w, r, "sessions.read") {
+			return
+		}
 		msgs, err := s.Messages(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -119,6 +132,9 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case action == "messages" && r.Method == http.MethodPost:
+		if !h.requireScope(w, r, "sessions.write") {
+			return
+		}
 		var req struct {
 			Message           string `json:"message"`
 			StreamingBehavior string `json:"streaming_behavior"`
@@ -142,6 +158,9 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case action == "abort" && r.Method == http.MethodPost:
+		if !h.requireScope(w, r, "sessions.write") {
+			return
+		}
 		err := s.Abort(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -151,6 +170,9 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case action == "stream" && r.Method == http.MethodGet:
+		if !h.requireScope(w, r, "sessions.read") {
+			return
+		}
 		h.handleSessionStream(w, r, sessionID, s)
 		return
 
@@ -255,6 +277,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (h *Handler) requireScope(w http.ResponseWriter, r *http.Request, scope string) bool {
+	identity := auth.FromContext(r.Context())
+	if !auth.HasScope(identity, scope) {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "insufficient scope"})
+		return false
+	}
+	return true
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter) {
