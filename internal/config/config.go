@@ -13,6 +13,8 @@ type Config struct {
 	PiArgs          []string
 	SessionsBaseDir string
 	Auth            auth.AuthConfig
+	StoreDriver     string
+	StoreDSN        string
 }
 
 func LoadFromEnv() Config {
@@ -21,6 +23,8 @@ func LoadFromEnv() Config {
 		PiBinPath:       envOrDefault("PI_BIN_PATH", "pi"),
 		PiArgs:          splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc --no-session")),
 		SessionsBaseDir: envOrDefault("SESSIONS_BASE_DIR", "./.gateway-sessions"),
+		StoreDriver:     envOrDefault("STORE_DRIVER", "sqlite"),
+		StoreDSN:        envOrDefault("STORE_DSN", "./.gateway.db"),
 		Auth: auth.AuthConfig{
 			APIKeys:     auth.ParseAPIKeys(os.Getenv("AUTH_API_KEYS")),
 			JWKSUrl:     os.Getenv("AUTH_JWKS_URL"),

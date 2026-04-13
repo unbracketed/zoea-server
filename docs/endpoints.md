@@ -40,7 +40,8 @@ Create a new agent session.
 ```json
 {
   "user_id": "alice",
-  "project_id": "my-project"
+  "project_id": "my-project",
+  "external_id": "telegram:12345"
 }
 ```
 
@@ -48,12 +49,52 @@ Create a new agent session.
 |---|---|---|---|
 | `user_id` | string | yes | Identifies the user |
 | `project_id` | string | no | Optional project context |
+| `external_id` | string | no | Unique external identifier (e.g. for bridge lookup) |
 
 **Response** `201`
 ```json
 {
   "session_id": "s_000001",
   "status": "ready"
+}
+```
+
+If `external_id` is already taken: `409 Conflict`
+```json
+{"error": "external_id already exists"}
+```
+
+---
+
+### `GET /v1/sessions`
+
+List sessions with optional filters.
+
+**Scope:** `sessions.read`
+
+**Query parameters:**
+
+| Param | Type | Description |
+|---|---|---|
+| `user_id` | string | Filter by user |
+| `external_id` | string | Exact match on external ID |
+| `limit` | int | Max results (default 50, max 200) |
+| `offset` | int | Pagination offset (default 0) |
+
+**Response** `200`
+```json
+{
+  "sessions": [
+    {
+      "session_id": "s_000001",
+      "user_id": "alice",
+      "project_id": "my-project",
+      "external_id": "telegram:12345",
+      "status": "active",
+      "created_at": "2026-04-01T12:00:00Z",
+      "last_active_at": "2026-04-01T12:01:00Z"
+    }
+  ]
 }
 ```
 

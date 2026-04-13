@@ -92,8 +92,10 @@ All config is via environment variables. Defaults work for local dev.
 | `SESSIONS_BASE_DIR` | Working directory for sessions | `./.gateway-sessions` |
 | `AUTH_API_KEYS` | API keys for auth (enables auth) | empty |
 | `GATEWAY_BEHIND_PROXY` | Treat all connections as remote | empty |
+| `STORE_DRIVER` | Storage backend | `sqlite` |
+| `STORE_DSN` | Database path / connection string | `./.gateway.db` |
 
-See [Authentication](authentication.md) for auth configuration details.
+See [Authentication](authentication.md) for auth configuration details and [Storage](storage.md) for persistence details.
 
 ## Run with auth enabled
 

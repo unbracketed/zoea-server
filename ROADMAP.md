@@ -1,6 +1,6 @@
 # Go Agent Gateway Roadmap
 
-Current state: working Pi RPC bridge with REST API + WebSocket streaming. Normalized event mapping (Phase 1) and extension UI bridging (Phase 2) are complete.
+Current state: working Pi RPC bridge with REST API + WebSocket streaming. Normalized event mapping (Phase 1), extension UI bridging (Phase 2), auth middleware (Phase 3), and persistent storage (Phase 4) are complete.
 
 ---
 
@@ -73,7 +73,9 @@ Fire-and-forget methods (notify, setStatus, setWidget, setTitle, set_editor_text
 
 ---
 
-## Phase 3: Auth Middleware
+## ✅ Phase 3: Auth Middleware (DONE)
+
+Single auth gate middleware that protects all gateway routes. Zero-config for local dev, API key auth for bridges and services, proxy-aware. Rate limiting on unauthenticated requests.
 
 ### JWT/OIDC
 
@@ -96,11 +98,9 @@ Fire-and-forget methods (notify, setStatus, setWidget, setTitle, set_editor_text
 
 ---
 
-## Phase 4: Persistent Storage
+## ✅ Phase 4: Persistent Storage (DONE)
 
-### Purpose
-
-Gateway metadata, session index, and optional message cache. Pi session files remain source of truth for agent context.
+SQLite-backed storage for session metadata and message history. Pi session files remain source of truth for agent context.
 
 ### Schema (Postgres or SQLite)
 
@@ -133,11 +133,12 @@ CREATE INDEX idx_messages_session ON session_messages(session_id);
 
 ### Implementation
 
-- New `internal/store/` package with interface + Postgres/SQLite implementations
-- Session manager delegates to store for create/get/list/delete
-- On `agent_end`, persist messages to `session_messages`
-- `GET /v1/sessions` list endpoint (paginated, filtered by user)
-- `GET /v1/sessions?external_id=telegram:12345` lookup by external ID (for bridges)
+- `internal/store/` package with `Store` interface + SQLite implementation
+- Session manager persists metadata on create/delete and seeds counter on startup
+- On `agent.run.end`, messages are persisted to `session_messages` via background listener
+- `GET /v1/sessions` list endpoint (paginated, filtered by `user_id` and `external_id`)
+- `POST /v1/sessions` accepts `external_id` for bridge session lookup
+- Config: `STORE_DRIVER` (default `sqlite`), `STORE_DSN` (default `./.gateway.db`)
 
 ---
 
@@ -307,8 +308,8 @@ None of these require gateway changes beyond what Phase 6 provides — they all 
 |---|---|---|---|
 | 1. Event mapping | ✅ Done | — | — |
 | 2. Extension UI | ✅ Done | Phase 1 | — |
-| 3. Auth | TODO | — | 1-2 days |
-| 4. Persistence | TODO | — | 2-3 days |
+| 3. Auth | ✅ Done | — | — |
+| 4. Persistence | ✅ Done | — | — |
 | 5. Additional commands | TODO | — | 1-2 days |
 | 6. Bridge infra | TODO | Phase 4 | 1-2 days |
 | 6a. Telegram bridge | TODO | Phase 6 | 2-3 days |

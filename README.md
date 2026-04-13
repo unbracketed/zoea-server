@@ -38,6 +38,7 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 | `GET` | `/healthz` | public | Health check |
 | `GET` | `/readyz` | public | Readiness check |
 | `POST` | `/v1/sessions` | `sessions.write` | Create session |
+| `GET` | `/v1/sessions` | `sessions.read` | List sessions |
 | `GET` | `/v1/sessions/{id}/state` | `sessions.read` | Get session state |
 | `GET` | `/v1/sessions/{id}/messages` | `sessions.read` | Get message history |
 | `POST` | `/v1/sessions/{id}/messages` | `sessions.write` | Send prompt |
@@ -50,6 +51,8 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 - [Quickstart](docs/quickstart.md) — get running in under a minute
 - [API Endpoints](docs/endpoints.md) — full endpoint reference
 - [Authentication](docs/authentication.md) — auth modes, scopes, API keys, proxy setup
+- [Storage](docs/storage.md) — persistence, schema, external IDs, message history
+- [Configuration](docs/configuration.md) — all environment variables
 
 ## Configuration
 
@@ -61,6 +64,8 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 | `SESSIONS_BASE_DIR` | Working directory for sessions | `./.gateway-sessions` |
 | `AUTH_API_KEYS` | API keys (enables auth) | empty |
 | `GATEWAY_BEHIND_PROXY` | Treat all connections as remote | empty |
+| `STORE_DRIVER` | Storage backend | `sqlite` |
+| `STORE_DSN` | Database path / connection string | `./.gateway.db` |
 
 ## Tests
 

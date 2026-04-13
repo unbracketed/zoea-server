@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -13,13 +14,33 @@ import (
 	"github.com/brian/go-agent-gateway/internal/config"
 	"github.com/brian/go-agent-gateway/internal/process"
 	"github.com/brian/go-agent-gateway/internal/session"
+	"github.com/brian/go-agent-gateway/internal/store"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "status" {
+		runStatus()
+		return
+	}
+
 	cfg := config.LoadFromEnv()
 
+	st, err := store.Open(cfg.StoreDriver, cfg.StoreDSN)
+	if err != nil {
+		log.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	if err := st.Init(context.Background()); err != nil {
+		log.Fatalf("init store: %v", err)
+	}
+
 	pm := process.NewRPCProcessManager(cfg.PiBinPath, cfg.PiArgs, cfg.SessionsBaseDir)
-	sm := session.NewManager(pm)
+	sm := session.NewManager(pm, st)
+
+	if err := sm.Init(context.Background()); err != nil {
+		log.Fatalf("init session manager: %v", err)
+	}
 
 	h := api.NewHandler(sm)
 

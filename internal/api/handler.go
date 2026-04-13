@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/brian/go-agent-gateway/internal/auth"
 	"github.com/brian/go-agent-gateway/internal/process"
 	"github.com/brian/go-agent-gateway/internal/session"
-	// gateway import not needed — events arrive fully typed from session.Subscribe
+	"github.com/brian/go-agent-gateway/internal/store"
 	"github.com/gorilla/websocket"
 )
 
@@ -33,6 +34,7 @@ func NewHandler(sm *session.Manager) *Handler {
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", h.handleHealth)
+	mux.HandleFunc("/readyz", h.handleReady)
 	mux.HandleFunc("/v1/sessions", h.handleSessions)
 	mux.HandleFunc("/v1/sessions/", h.handleSessionByID)
 	return mux
@@ -42,18 +44,30 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (h *Handler) handleReady(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodPost:
+		h.handleCreateSession(w, r)
+	case http.MethodGet:
+		h.handleListSessions(w, r)
+	default:
 		writeMethodNotAllowed(w)
-		return
 	}
+}
+
+func (h *Handler) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if !h.requireScope(w, r, "sessions.write") {
 		return
 	}
 
 	var req struct {
-		UserID    string `json:"user_id"`
-		ProjectID string `json:"project_id"`
+		UserID     string `json:"user_id"`
+		ProjectID  string `json:"project_id"`
+		ExternalID string `json:"external_id"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -63,8 +77,12 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s, err := h.sessions.Create(r.Context(), req.UserID, req.ProjectID)
+	s, err := h.sessions.Create(r.Context(), req.UserID, req.ProjectID, req.ExternalID)
 	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "external_id already exists"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -73,6 +91,64 @@ func (h *Handler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		"session_id": s.ID,
 		"status":     "ready",
 	})
+}
+
+func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	if !h.requireScope(w, r, "sessions.read") {
+		return
+	}
+
+	q := session.ListQuery{
+		UserID:     r.URL.Query().Get("user_id"),
+		ExternalID: r.URL.Query().Get("external_id"),
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			q.Limit = n
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid limit"})
+			return
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			q.Offset = n
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid offset"})
+			return
+		}
+	}
+
+	records, err := h.sessions.List(r.Context(), q)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+
+	type sessionEntry struct {
+		SessionID    string `json:"session_id"`
+		UserID       string `json:"user_id"`
+		ProjectID    string `json:"project_id,omitempty"`
+		ExternalID   string `json:"external_id,omitempty"`
+		Status       string `json:"status"`
+		CreatedAt    string `json:"created_at"`
+		LastActiveAt string `json:"last_active_at"`
+	}
+
+	entries := make([]sessionEntry, 0, len(records))
+	for _, rec := range records {
+		entries = append(entries, sessionEntry{
+			SessionID:    rec.ID,
+			UserID:       rec.UserID,
+			ProjectID:    rec.ProjectID,
+			ExternalID:   rec.ExternalID,
+			Status:       rec.Status,
+			CreatedAt:    rec.CreatedAt.Format(time.RFC3339),
+			LastActiveAt: rec.LastActiveAt.Format(time.RFC3339),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": entries})
 }
 
 func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
@@ -88,14 +164,8 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		action = parts[1]
 	}
 
-	s, err := h.sessions.Get(sessionID)
-	if err != nil {
-		h.writeSessionErr(w, err)
-		return
-	}
-
-	switch {
-	case action == "" && r.Method == http.MethodDelete:
+	// Delete doesn't require a live handle — allow deleting store-only records.
+	if action == "" && r.Method == http.MethodDelete {
 		if !h.requireScope(w, r, "sessions.write") {
 			return
 		}
@@ -106,6 +176,15 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "deleted"})
 		return
+	}
+
+	s, err := h.sessions.Get(sessionID)
+	if err != nil {
+		h.writeSessionErr(w, err)
+		return
+	}
+
+	switch {
 
 	case action == "state" && r.Method == http.MethodGet:
 		if !h.requireScope(w, r, "sessions.read") {
