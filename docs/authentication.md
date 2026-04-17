@@ -1,6 +1,6 @@
 # Authentication
 
-The gateway uses a single auth middleware that protects all routes. It's designed for zero-config local development with mandatory auth for remote and production deployments.
+The server uses a single auth middleware that protects all routes. It's designed for zero-config local development with mandatory auth for remote and production deployments.
 
 ## Three-tier model
 
@@ -10,7 +10,7 @@ The gateway uses a single auth middleware that protects all routes. It's designe
 | **Remote lockout** | No credentials configured + remote connection | `401 Unauthorized` on every request |
 | **Full auth** | Any credentials configured | Auth always required |
 
-This means `go run ./cmd/gateway` works immediately with no config. The moment you set `AUTH_API_KEYS`, auth is enforced on all non-public endpoints.
+This means `go run ./cmd/server` works immediately with no config. The moment you set `AUTH_API_KEYS`, auth is enforced on all non-public endpoints.
 
 ## Configuration
 
@@ -20,7 +20,7 @@ This means `go run ./cmd/gateway` works immediately with no config. The moment y
 | `AUTH_JWKS_URL` | JWKS endpoint for JWT validation | empty (JWT disabled) |
 | `AUTH_JWT_ISSUER` | Expected JWT `iss` claim | empty (not checked) |
 | `AUTH_JWT_AUDIENCE` | Expected JWT `aud` claim | empty (not checked) |
-| `GATEWAY_BEHIND_PROXY` | Force all connections to be treated as remote | empty (false) |
+| `ZOEA_BEHIND_PROXY` | Force all connections to be treated as remote | empty (false) |
 
 Auth is **enabled** when `AUTH_API_KEYS` or `AUTH_JWKS_URL` is non-empty. When neither is set, only local connections are allowed.
 
@@ -97,23 +97,23 @@ A request with valid credentials but insufficient scope receives `403 Forbidden`
 
 A connection is considered local only when **all** of these are true:
 
-1. `GATEWAY_BEHIND_PROXY` is **not** set
+1. `ZOEA_BEHIND_PROXY` is **not** set
 2. No proxy headers are present (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `Forwarded`)
 3. The TCP remote address is loopback (`127.0.0.1` or `::1`)
 
 If **any** check fails, the connection is treated as remote.
 
-This prevents a local-only gateway from being accidentally exposed through a reverse proxy.
+This prevents a local-only server from being accidentally exposed through a reverse proxy.
 
 ## Behind a proxy
 
 When deploying behind nginx, Caddy, Cloudflare, or any reverse proxy:
 
 ```bash
-GATEWAY_BEHIND_PROXY=1 AUTH_API_KEYS="myapp:sk_secret:admin" go run ./cmd/gateway
+ZOEA_BEHIND_PROXY=1 AUTH_API_KEYS="myapp:sk_secret:admin" go run ./cmd/server
 ```
 
-Setting `GATEWAY_BEHIND_PROXY` ensures:
+Setting `ZOEA_BEHIND_PROXY` ensures:
 - All connections are treated as remote (no local-dev bypass)
 - Rate limiting uses forwarded client IP (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`) instead of the proxy's IP
 
@@ -158,21 +158,21 @@ The auth middleware evaluates these rules in order — first match wins:
 
 ## JWT support
 
-JWT validation via JWKS is stubbed but not yet implemented. When `AUTH_JWKS_URL` is set, the gateway will fetch signing keys and validate JWT bearer tokens. This will be completed in a future release.
+JWT validation via JWKS is stubbed but not yet implemented. When `AUTH_JWKS_URL` is set, the server will fetch signing keys and validate JWT bearer tokens. This will be completed in a future release.
 
 ## Examples
 
 ### Local development (no config)
 
 ```bash
-go run ./cmd/gateway
+go run ./cmd/server
 # → Full access from localhost, remote connections rejected
 ```
 
 ### Single admin key
 
 ```bash
-AUTH_API_KEYS="bot:sk_mykey:admin" go run ./cmd/gateway
+AUTH_API_KEYS="bot:sk_mykey:admin" go run ./cmd/server
 # → All endpoints require Bearer sk_mykey
 ```
 
@@ -180,7 +180,7 @@ AUTH_API_KEYS="bot:sk_mykey:admin" go run ./cmd/gateway
 
 ```bash
 AUTH_API_KEYS="telegram:sk_tg_key:sessions.read,sessions.write;grafana:sk_graf:sessions.read" \
-  go run ./cmd/gateway
+  go run ./cmd/server
 # → telegram key can read and write
 # → grafana key can only read
 ```
@@ -188,8 +188,8 @@ AUTH_API_KEYS="telegram:sk_tg_key:sessions.read,sessions.write;grafana:sk_graf:s
 ### Production behind nginx
 
 ```bash
-GATEWAY_BEHIND_PROXY=1 \
+ZOEA_BEHIND_PROXY=1 \
 AUTH_API_KEYS="frontend:sk_prod_key:admin" \
-GATEWAY_LISTEN_ADDR=:9090 \
-  go run ./cmd/gateway
+ZOEA_LISTEN_ADDR=:9090 \
+  go run ./cmd/server
 ```

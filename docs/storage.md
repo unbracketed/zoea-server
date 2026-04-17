@@ -1,27 +1,27 @@
 # Storage
 
-The gateway persists session metadata and message history to a local database. This allows sessions to survive process restarts (metadata), enables listing and querying sessions, and supports bridge workflows via `external_id` lookup.
+The server persists session metadata and message history to a local database. This allows sessions to survive process restarts (metadata), enables listing and querying sessions, and supports bridge workflows via `external_id` lookup.
 
-Pi session files remain the source of truth for agent runtime context. The gateway store is an index and cache layer — it does not replace Pi's own session state.
+Pi session files remain the source of truth for agent runtime context. The server store is an index and cache layer — it does not replace Pi's own session state.
 
 ## Configuration
 
 | Variable | Purpose | Default |
 |---|---|---|
 | `STORE_DRIVER` | Storage backend | `sqlite` |
-| `STORE_DSN` | Database path / connection string | `./.gateway.db` |
+| `STORE_DSN` | Database path / connection string | `./.zoea.db` |
 
 The database file and schema are created automatically on first startup. No manual setup required.
 
 ```bash
 # Default — database in current directory
-go run ./cmd/gateway
+go run ./cmd/server
 
 # Custom location
-STORE_DSN=/var/lib/gateway/data.db go run ./cmd/gateway
+STORE_DSN=/var/lib/zoea/data.db go run ./cmd/server
 
 # In-memory (testing only, data lost on restart)
-STORE_DSN=":memory:" go run ./cmd/gateway
+STORE_DSN=":memory:" go run ./cmd/server
 ```
 
 ## What is stored
@@ -90,7 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON session_messages(session_id);
 
 ## External IDs
 
-The `external_id` field enables bridge integrations (Telegram, Discord, etc.) to map platform-specific identifiers to gateway sessions.
+The `external_id` field enables bridge integrations (Telegram, Discord, etc.) to map platform-specific identifiers to server sessions.
 
 - Set on creation: `POST /v1/sessions {"user_id":"brian", "external_id":"telegram:12345"}`
 - Look up by external ID: `GET /v1/sessions?external_id=telegram:12345`
@@ -104,15 +104,15 @@ Convention for bridge external IDs: `platform:platform_id` (e.g. `telegram:98765
 Messages are persisted automatically when an agent run completes:
 
 1. A background listener watches for `agent.run.end` events on each session
-2. On run end, the gateway calls `get_messages` on the Pi subprocess to get the full history
+2. On run end, the server calls `get_messages` on the Pi subprocess to get the full history
 3. The entire message history is written to `session_messages`, replacing any previous snapshot
-4. If `get_messages` fails, the gateway falls back to parsing messages from the `agent.run.end` event payload
+4. If `get_messages` fails, the server falls back to parsing messages from the `agent.run.end` event payload
 
 This means `session_messages` always reflects the latest complete conversation state. Messages are replaced (not appended) because Pi manages its own context window, including compaction.
 
 ## Session ID continuity
 
-On startup, the gateway reads the highest existing session ID from the store and seeds its counter. This prevents ID collisions after a restart:
+On startup, the server reads the highest existing session ID from the store and seeds its counter. This prevents ID collisions after a restart:
 
 ```
 # Before restart: last session was s_000042
@@ -143,7 +143,7 @@ See [API Endpoints](endpoints.md) for full request/response details.
 
 ## Limitations
 
-- **No process resurrection** — persisted session metadata survives a restart, but the Pi subprocess does not. Active sessions from a previous gateway process will exist in the store but won't have a running agent. A future phase may add session reattachment.
+- **No process resurrection** — persisted session metadata survives a restart, but the Pi subprocess does not. Active sessions from a previous server process will exist in the store but won't have a running agent. A future phase may add session reattachment.
 - **SQLite only** — the `Store` interface is backend-agnostic, but only SQLite is implemented. Postgres support can be added by implementing the same interface.
 - **No data retention policies** — old sessions and messages are kept indefinitely. Manual cleanup or a future TTL feature is needed for long-running deployments.
-- **Single-writer** — SQLite supports one writer at a time. This is fine for single-process deployments but won't scale to multiple gateway instances. Use Postgres for multi-instance setups (when available).
+- **Single-writer** — SQLite supports one writer at a time. This is fine for single-process deployments but won't scale to multiple server instances. Use Postgres for multi-instance setups (when available).

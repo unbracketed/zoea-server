@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/brian/go-agent-gateway/internal/auth"
+	"github.com/unbracketed/zoea-server/internal/auth"
 )
 
 type Config struct {
@@ -19,18 +19,18 @@ type Config struct {
 
 func LoadFromEnv() Config {
 	return Config{
-		ListenAddr:      envOrDefault("GATEWAY_LISTEN_ADDR", ":8080"),
+		ListenAddr:      envOrDefault("ZOEA_LISTEN_ADDR", ":8080"),
 		PiBinPath:       envOrDefault("PI_BIN_PATH", "pi"),
 		PiArgs:          splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc --no-session")),
-		SessionsBaseDir: envOrDefault("SESSIONS_BASE_DIR", "./.gateway-sessions"),
+		SessionsBaseDir: envOrDefault("SESSIONS_BASE_DIR", "./.zoea-sessions"),
 		StoreDriver:     envOrDefault("STORE_DRIVER", "sqlite"),
-		StoreDSN:        envOrDefault("STORE_DSN", "./.gateway.db"),
+		StoreDSN:        envOrDefault("STORE_DSN", "./.zoea.db"),
 		Auth: auth.AuthConfig{
 			APIKeys:     auth.ParseAPIKeys(os.Getenv("AUTH_API_KEYS")),
 			JWKSUrl:     os.Getenv("AUTH_JWKS_URL"),
 			JWTIssuer:   os.Getenv("AUTH_JWT_ISSUER"),
 			JWTAudience: os.Getenv("AUTH_JWT_AUDIENCE"),
-			BehindProxy: os.Getenv("GATEWAY_BEHIND_PROXY") != "",
+			BehindProxy: os.Getenv("ZOEA_BEHIND_PROXY") != "",
 		},
 	}
 }

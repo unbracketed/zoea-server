@@ -1,0 +1,4 @@
+.gateway.db
+.zoea.db
+.gateway-sessions/
+.zoea-sessions/

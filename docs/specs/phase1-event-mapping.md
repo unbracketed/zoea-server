@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace raw Pi RPC event forwarding with a stable, typed gateway event schema. Clients receive clean events they can build UI against without parsing Pi internals.
+Replace raw Pi RPC event forwarding with a stable, typed server event schema. Clients receive clean events they can build UI against without parsing Pi internals.
 
 ---
 
@@ -18,8 +18,8 @@ Everything after `broadcastEvent` sends the raw JSONL blob unchanged. Clients mu
 ## Target Flow
 
 ```
-Pi stdout (JSONL) → rpcHandle.readLoop → parseRPCEvent(line) → mapToGatewayEvents(parsed)
-    → broadcastEvent(gatewayEvent) → WS handler writes normalized envelope
+Pi stdout (JSONL) → rpcHandle.readLoop → parseRPCEvent(line) → mapToServerEvents(parsed)
+    → broadcastEvent(serverEvent) → WS handler writes normalized envelope
 ```
 
 ---
@@ -133,9 +133,9 @@ type ExtensionUIRequestEvent struct {
 }
 ```
 
-### 2. `internal/rpc/mapper.go` — RPC-to-gateway event mapper
+### 2. `internal/rpc/mapper.go` — RPC-to-server event mapper
 
-Single function that takes a raw JSONL line and returns zero or more gateway events.
+Single function that takes a raw JSONL line and returns zero or more server events.
 
 ```go
 func MapRPCLine(raw []byte) []gateway.Event
@@ -158,7 +158,7 @@ Key logic:
 - For other top-level types: direct 1:1 mapping
 - Unknown types: forward as `agent.unknown` with raw payload (don't drop)
 
-### 3. `internal/gateway/events.go` — Gateway event types
+### 3. `internal/gateway/events.go` — Server event types
 
 The stable contract clients code against.
 
@@ -277,7 +277,7 @@ type Unknown struct {
 Change `Event` to use the gateway event type:
 
 ```go
-import "github.com/brian/go-agent-gateway/internal/gateway"
+import "github.com/unbracketed/zoea-server/internal/gateway"
 
 // Replace process.Event with gateway.Event in AgentHandle.Subscribe
 ```
@@ -304,17 +304,17 @@ h.broadcastEvent(env.Type, json.RawMessage(line))
 // After:
 events := rpc.MapRPCLine([]byte(line))
 for _, e := range events {
-    h.broadcastGatewayEvent(e)
+    h.broadcastServerEvent(e)
 }
 ```
 
 ### 6. `internal/process/noop_manager.go`
 
-Update to emit gateway-typed events (keep working for tests).
+Update to emit server-typed events (keep working for tests).
 
 ### 7. `internal/api/handler.go`
 
-Simplify WS send — just write the gateway event directly instead of wrapping in `{"type":"agent.event","raw":...}`:
+Simplify WS send — just write the server event directly instead of wrapping in `{"type":"agent.event","raw":...}`:
 
 ```go
 // Before:
@@ -357,7 +357,7 @@ Fixtures: copy real JSONL from Pi RPC docs into `internal/rpc/testdata/`.
 
 ### Integration test
 
-Send a prompt through the gateway, collect WS events, assert:
+Send a prompt through the server, collect WS events, assert:
 - Received `agent.run.start`
 - Received one or more `agent.text.delta`
 - Received `agent.run.end`

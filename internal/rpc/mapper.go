@@ -3,7 +3,7 @@ package rpc
 import (
 	"encoding/json"
 
-	"github.com/brian/go-agent-gateway/internal/gateway"
+	"github.com/unbracketed/zoea-server/internal/gateway"
 )
 
 // MapRPCLine takes a raw JSONL line from Pi's stdout and returns

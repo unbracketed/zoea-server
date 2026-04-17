@@ -48,7 +48,7 @@ type SQLiteStore struct {
 
 func OpenSQLite(dsn string) (*SQLiteStore, error) {
 	if strings.TrimSpace(dsn) == "" {
-		dsn = "./.gateway.db"
+		dsn = "./.zoea.db"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

@@ -2,13 +2,13 @@
 
 ## Goal
 
-Add durable storage for session metadata and message history so the gateway can:
+Add durable storage for session metadata and message history so the server can:
 
 1. List and query sessions without depending on in-memory state
 2. Resolve sessions by `external_id` (required for bridges)
 3. Persist message history on run completion
 
-Pi session files remain the source of truth for agent context/runtime. Storage is a gateway index/cache layer.
+Pi session files remain the source of truth for agent context/runtime. Storage is a server index/cache layer.
 
 ---
 
@@ -36,7 +36,7 @@ Pi session files remain the source of truth for agent context/runtime. Storage i
 
 ### Out of scope
 
-- Session process resurrection after gateway restart
+- Session process resurrection after server restart
 - Full Postgres implementation (leave interface-ready; SQLite first)
 - Data retention/TTL policies
 
@@ -49,7 +49,7 @@ Pi session files remain the source of truth for agent context/runtime. Storage i
 Use SQLite first for fast local/prod portability and zero external dependency.
 
 - Driver: `modernc.org/sqlite` (pure Go, no CGO)
-- DB file path via env var (default: `./.gateway.db`)
+- DB file path via env var (default: `./.zoea.db`)
 
 Keep the store interface backend-agnostic so Postgres can be added later.
 
@@ -172,9 +172,9 @@ type Store interface {
 
 Add store config:
 - `STORE_DRIVER` (default `sqlite`)
-- `STORE_DSN` (default `./.gateway.db`)
+- `STORE_DSN` (default `./.zoea.db`)
 
-### 3) `cmd/gateway/main.go`
+### 3) `cmd/server/main.go`
 
 - Construct store from config
 - Initialize schema on startup
@@ -217,7 +217,7 @@ If `RunEnd.Messages` is empty/unparseable, fallback to `GetMessages()` and persi
 
 - Duplicate `external_id` → `409 Conflict` (`{"error":"external_id already exists"}`)
 - Invalid pagination params → `400 Bad Request`
-- Store unavailable on startup → fail fast (gateway does not start)
+- Store unavailable on startup → fail fast (server does not start)
 - Store write failures during run-end persistence → log and continue (do not kill session)
 
 ---
@@ -246,7 +246,7 @@ If `RunEnd.Messages` is empty/unparseable, fallback to `GetMessages()` and persi
 
 ### Integration test
 
-- Start gateway with SQLite file
+- Start server with SQLite file
 - Create session with external_id
 - Send prompt via noop/real process
 - Assert:
@@ -260,7 +260,7 @@ If `RunEnd.Messages` is empty/unparseable, fallback to `GetMessages()` and persi
 
 1. Add `internal/store` interface + SQLite backend + schema bootstrap
 2. Extend config for store driver/DSN
-3. Wire store initialization in `cmd/gateway/main.go`
+3. Wire store initialization in `cmd/server/main.go`
 4. Refactor `session.Manager` to persist metadata + seed counter from store
 5. Extend `POST /v1/sessions` for `external_id`
 6. Add `GET /v1/sessions` with query filters/pagination
@@ -272,7 +272,7 @@ If `RunEnd.Messages` is empty/unparseable, fallback to `GetMessages()` and persi
 
 ## Acceptance Criteria
 
-- Session metadata survives gateway restart
+- Session metadata survives server restart
 - `GET /v1/sessions` returns persisted sessions with filters
 - `external_id` can be used to find session deterministically
 - Message rows are written when an agent run ends

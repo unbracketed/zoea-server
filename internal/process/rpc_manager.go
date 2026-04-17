@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/brian/go-agent-gateway/internal/gateway"
-	"github.com/brian/go-agent-gateway/internal/rpc"
+	"github.com/unbracketed/zoea-server/internal/gateway"
+	"github.com/unbracketed/zoea-server/internal/rpc"
 )
 
 type RPCProcessManager struct {

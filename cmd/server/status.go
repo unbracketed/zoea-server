@@ -11,16 +11,16 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/brian/go-agent-gateway/internal/config"
-	gatewaystore "github.com/brian/go-agent-gateway/internal/store"
+	"github.com/unbracketed/zoea-server/internal/config"
+	zoeastore "github.com/unbracketed/zoea-server/internal/store"
 )
 
 func runStatus() {
 	cfg := config.LoadFromEnv()
 	ok := true
 
-	fmt.Println("Gateway Status")
-	fmt.Println("==============")
+	fmt.Println("Zoea Agent Server Status")
+	fmt.Println("========================")
 	fmt.Println()
 
 	// --- Server ---
@@ -87,7 +87,7 @@ func runStatus() {
 		}
 	}
 
-	st, err := gatewaystore.Open(cfg.StoreDriver, cfg.StoreDSN)
+	st, err := zoeastore.Open(cfg.StoreDriver, cfg.StoreDSN)
 	if err != nil {
 		fmt.Printf("  Status         : ✗ cannot open (%v)\n", err)
 		ok = false

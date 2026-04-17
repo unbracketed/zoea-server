@@ -94,8 +94,8 @@ type QueueUpdateEvent struct {
 
 // AgentEndEvent represents agent_end.
 type AgentEndEvent struct {
-	Type     string            `json:"type"`
-	Messages json.RawMessage   `json:"messages"`
+	Type     string          `json:"type"`
+	Messages json.RawMessage `json:"messages"`
 }
 
 // TurnEndEvent represents turn_end.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/brian/go-agent-gateway/internal/gateway"
+	"github.com/unbracketed/zoea-server/internal/gateway"
 )
 
 func NewNoopProcessManager() Manager {

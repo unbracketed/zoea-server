@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/brian/go-agent-gateway/internal/gateway"
+	"github.com/unbracketed/zoea-server/internal/gateway"
 )
 
 func loadFixture(t *testing.T, name string) []byte {

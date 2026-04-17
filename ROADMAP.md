@@ -1,4 +1,4 @@
-# Go Agent Gateway Roadmap
+# Zoea Agent Server Roadmap
 
 Current state: working Pi RPC bridge with REST API + WebSocket streaming. Normalized event mapping (Phase 1), extension UI bridging (Phase 2), auth middleware (Phase 3), and persistent storage (Phase 4) are complete.
 
@@ -21,7 +21,7 @@ Raw Pi RPC events are mapped into a stable gateway event schema. Clients receive
 
 ### Mapped event types
 
-| Pi RPC event | Gateway event | Notes |
+| Pi RPC event | Zoea event | Notes |
 |---|---|---|
 | `message_update` / `text_delta` | `agent.text.delta` | `{ delta }` |
 | `message_update` / `text_start` | `agent.text.start` | |
@@ -75,7 +75,7 @@ Fire-and-forget methods (notify, setStatus, setWidget, setTitle, set_editor_text
 
 ## ✅ Phase 3: Auth Middleware (DONE)
 
-Single auth gate middleware that protects all gateway routes. Zero-config for local dev, API key auth for bridges and services, proxy-aware. Rate limiting on unauthenticated requests.
+Single auth gate middleware that protects all server routes. Zero-config for local dev, API key auth for bridges and services, proxy-aware. Rate limiting on unauthenticated requests.
 
 ### JWT/OIDC
 
@@ -138,7 +138,7 @@ CREATE INDEX idx_messages_session ON session_messages(session_id);
 - On `agent.run.end`, messages are persisted to `session_messages` via background listener
 - `GET /v1/sessions` list endpoint (paginated, filtered by `user_id` and `external_id`)
 - `POST /v1/sessions` accepts `external_id` for bridge session lookup
-- Config: `STORE_DRIVER` (default `sqlite`), `STORE_DSN` (default `./.gateway.db`)
+- Config: `STORE_DRIVER` (default `sqlite`), `STORE_DSN` (default `./.zoea.db`)
 
 ---
 
@@ -166,18 +166,18 @@ Expose remaining Pi RPC commands as REST endpoints:
 
 ### Architecture
 
-Bridges are **separate processes** that talk to the gateway via its REST + WS API. They are not embedded in the gateway.
+Bridges are **separate processes** that talk to the server via its REST + WS API. They are not embedded in the server.
 
 ```
 Telegram Bridge ──┐
-Discord Bridge  ──┼──→ Gateway REST + WS API ──→ pi --mode rpc
+Discord Bridge  ──┼──→ Zoea REST + WS API ──→ pi --mode rpc
 Email Bridge    ──┘         │
                          Storage
 ```
 
 Each bridge is a stateless protocol adapter:
 1. Receives a message from the platform
-2. Maps platform user → gateway session (find-or-create by `external_id`)
+2. Maps platform user → server session (find-or-create by `external_id`)
 3. `POST /v1/sessions/{id}/messages` to send the prompt
 4. Subscribes to `WS /v1/sessions/{id}/stream` for response events
 5. Collects `agent.text.delta` events, assembles the complete response
@@ -185,13 +185,13 @@ Each bridge is a stateless protocol adapter:
 
 ### Why separate processes
 
-- Different dependency trees (Telegram SDK, Discord SDK, SMTP libs) stay out of the gateway binary
+- Different dependency trees (Telegram SDK, Discord SDK, SMTP libs) stay out of the server binary
 - Different lifecycles (long-poll, webhook, persistent WS, polling)
 - Independent restart/deploy — crash one bridge without affecting others
 - Each bridge is small (~500-1000 lines)
 - Can be written in a different language if the SDK is better there
 
-### Gateway API additions for bridges
+### Server API additions for bridges
 
 - `external_id` field on session creation: `POST /v1/sessions {"user_id":"brian","external_id":"telegram:12345"}`
 - Session lookup by external ID: `GET /v1/sessions?external_id=telegram:12345`
@@ -202,7 +202,7 @@ Each bridge is a stateless protocol adapter:
 A small Go package `bridgekit/` with reusable helpers:
 - **Response assembler** — collect `agent.text.delta` events into a complete message string
 - **Chunker** — split long responses for platforms with message length limits (Telegram: 4096 chars, Discord: 2000 chars)
-- **Gateway client** — typed HTTP + WS client for the gateway API
+- **Server client** — typed HTTP + WS client for the server API
 - **Session mapper** — find-or-create session by external ID pattern
 
 Bridges import `bridgekit` but are otherwise standalone binaries.
@@ -253,8 +253,8 @@ Agent runs can be long (minutes with many tool calls). The bridge should:
 ### Config
 
 - `TELEGRAM_BOT_TOKEN` — from BotFather
-- `GATEWAY_URL` — e.g. `http://localhost:9090`
-- `GATEWAY_API_KEY` — for auth (Phase 3)
+- `ZOEA_URL` — e.g. `http://localhost:9090`
+- `ZOEA_API_KEY` — for auth (Phase 3)
 - `TELEGRAM_ALLOWED_USERS` — optional allowlist of Telegram user IDs
 
 ### Estimated effort
@@ -265,7 +265,7 @@ Agent runs can be long (minutes with many tool calls). The bridge should:
 
 ## Phase 6b: Future Bridges
 
-Each follows the same pattern — separate binary, gateway API client, platform SDK:
+Each follows the same pattern — separate binary, server API client, platform SDK:
 
 | Bridge | Platform API | Key considerations |
 |---|---|---|
@@ -293,9 +293,9 @@ None of these require gateway changes beyond what Phase 6 provides — they all 
 
 ## Phase 8: Deployment
 
-- Dockerfile for gateway (multi-stage build, non-root, includes pi binary)
+- Dockerfile for zoea-server (multi-stage build, non-root, includes pi binary)
 - Dockerfile per bridge (lightweight, just the bridge binary)
-- docker-compose with gateway + telegram-bridge for local dev
+- docker-compose with zoea-server + telegram-bridge for local dev
 - Health/readiness probes (`/healthz`, `/readyz`)
 - Persistent volume for Pi session files
 - CI: build + test + lint on push

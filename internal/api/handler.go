@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian/go-agent-gateway/internal/auth"
-	"github.com/brian/go-agent-gateway/internal/process"
-	"github.com/brian/go-agent-gateway/internal/session"
-	"github.com/brian/go-agent-gateway/internal/store"
 	"github.com/gorilla/websocket"
+	"github.com/unbracketed/zoea-server/internal/auth"
+	"github.com/unbracketed/zoea-server/internal/process"
+	"github.com/unbracketed/zoea-server/internal/session"
+	"github.com/unbracketed/zoea-server/internal/store"
 )
 
 type Handler struct {

@@ -9,12 +9,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/brian/go-agent-gateway/internal/api"
-	"github.com/brian/go-agent-gateway/internal/auth"
-	"github.com/brian/go-agent-gateway/internal/config"
-	"github.com/brian/go-agent-gateway/internal/process"
-	"github.com/brian/go-agent-gateway/internal/session"
-	"github.com/brian/go-agent-gateway/internal/store"
+	"github.com/unbracketed/zoea-server/internal/api"
+	"github.com/unbracketed/zoea-server/internal/auth"
+	"github.com/unbracketed/zoea-server/internal/config"
+	"github.com/unbracketed/zoea-server/internal/process"
+	"github.com/unbracketed/zoea-server/internal/session"
+	"github.com/unbracketed/zoea-server/internal/store"
 )
 
 func main() {
@@ -62,7 +62,7 @@ func main() {
 		_ = srv.Shutdown(context.Background())
 	}()
 
-	log.Printf("gateway listening on %s (%s)", cfg.ListenAddr, authModeString(&cfg.Auth))
+	log.Printf("zoea-server listening on %s (%s)", cfg.ListenAddr, authModeString(&cfg.Auth))
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}

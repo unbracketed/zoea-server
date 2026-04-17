@@ -1,4 +1,4 @@
-module github.com/brian/go-agent-gateway
+module github.com/unbracketed/zoea-server
 
 go 1.25.0
 

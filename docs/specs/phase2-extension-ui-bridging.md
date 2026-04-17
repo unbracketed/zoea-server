@@ -2,7 +2,7 @@
 
 ## Goal
 
-Enable Pi extensions to interact with the end user through the gateway. When an extension calls `ctx.ui.confirm()`, `ctx.ui.select()`, etc., the dialog surfaces on the client over WebSocket and the user's response routes back to the Pi process over stdin.
+Enable Pi extensions to interact with the end user through the server. When an extension calls `ctx.ui.confirm()`, `ctx.ui.select()`, etc., the dialog surfaces on the client over WebSocket and the user's response routes back to the Pi process over stdin.
 
 Fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`) are already forwarded as `agent.ui.request` events from Phase 1. This phase adds the return path for dialog methods.
 
@@ -12,7 +12,7 @@ Fire-and-forget methods (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_ed
 
 ### What works
 
-Phase 1 maps `extension_ui_request` from Pi's stdout to `agent.ui.request` gateway events. Clients receive them over WebSocket.
+Phase 1 maps `extension_ui_request` from Pi's stdout to `agent.ui.request` server events. Clients receive them over WebSocket.
 
 The WS read loop currently handles one inbound message type:
 
@@ -26,7 +26,7 @@ if msg["type"] == "abort" {
 
 1. No way for the client to send `extension_ui_response` back to Pi
 2. The `AgentHandle` interface has no method for writing raw JSONL to Pi's stdin
-3. No timeout tracking on the gateway side (Pi handles its own timeouts, but the gateway should surface expiry to clients)
+3. No timeout tracking on the server side (Pi handles its own timeouts, but the server should surface expiry to clients)
 
 ---
 
@@ -49,7 +49,7 @@ if msg["type"] == "abort" {
 }
 ```
 
-The `data.payload` field carries the complete Pi RPC event so the client has access to all fields (`title`, `message`, `options`, `timeout`, `placeholder`, `prefill`, etc.) without the gateway needing to parse every method variant.
+The `data.payload` field carries the complete Pi RPC event so the client has access to all fields (`title`, `message`, `options`, `timeout`, `placeholder`, `prefill`, etc.) without the server needing to parse every method variant.
 
 **Client → Server** (dialog response):
 
@@ -81,7 +81,7 @@ Or for cancellation:
 }
 ```
 
-The gateway translates this to Pi's expected format and writes to stdin:
+The server translates this to Pi's expected format and writes to stdin:
 
 ```json
 {"type": "extension_ui_response", "id": "uuid-1", "value": "Allow"}
@@ -101,7 +101,7 @@ The gateway translates this to Pi's expected format and writes to stdin:
 | `setTitle` | Fire-and-forget | No |
 | `set_editor_text` | Fire-and-forget | No |
 
-The gateway doesn't need to distinguish these — it forwards all `extension_ui_request` events to the client and forwards any `ui_response` messages back to Pi. Pi handles timeout and default resolution internally.
+The server doesn't need to distinguish these — it forwards all `extension_ui_request` events to the client and forwards any `ui_response` messages back to Pi. Pi handles timeout and default resolution internally.
 
 ---
 
@@ -127,7 +127,7 @@ type UIResponse struct {
 }
 ```
 
-Implementation on `rpcHandle`: marshal to `{"type": "extension_ui_response", "id": "...", ...}` and write to stdin. This is NOT a command with id correlation — Pi doesn't send a response back for `extension_ui_response`. It's fire-and-forget from gateway to Pi.
+Implementation on `rpcHandle`: marshal to `{"type": "extension_ui_response", "id": "...", ...}` and write to stdin. This is NOT a command with id correlation — Pi doesn't send a response back for `extension_ui_response`. It's fire-and-forget from server to Pi.
 
 Implementation on `noopHandle`: no-op (return nil).
 
@@ -260,7 +260,7 @@ Test `UIResponse` serialization:
 
 ### Integration test
 
-1. Start gateway + pi subprocess
+1. Start server + pi subprocess
 2. Load an extension that calls `ctx.ui.confirm("Allow?", "Run command?")`
 3. Observe `agent.ui.request` arrives on WebSocket with `method: "confirm"`
 4. Send `{"type": "ui_response", "id": "<matching>", "confirmed": true}` over WS
@@ -275,7 +275,7 @@ Spin up a mock process that:
 2. Reads stdin for `extension_ui_response`
 3. Validates the response matches
 
-Wire it through the gateway WS endpoint end-to-end.
+Wire it through the server WS endpoint end-to-end.
 
 ---
 

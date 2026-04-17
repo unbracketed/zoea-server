@@ -1,14 +1,14 @@
-# Go Agent Gateway
+# Zoea Agent Server
 
-HTTP/WebSocket gateway that bridges clients to `pi --mode rpc` agent subprocesses. Create sessions, send prompts, stream events — all over a REST API.
+HTTP/WebSocket server that bridges clients to `pi --mode rpc` agent subprocesses. Create sessions, send prompts, stream events — all over a REST API.
 
 ## Quick start
 
 ```bash
-go run ./cmd/gateway
+go run ./cmd/server
 ```
 
-No config needed for local dev. The gateway starts on `:8080` with full access from localhost.
+No config needed for local dev. The server starts on `:8080` with full access from localhost.
 
 ```bash
 # Create a session
@@ -26,7 +26,7 @@ npx wscat -c ws://localhost:8080/v1/sessions/s_000001/stream
 ## With auth
 
 ```bash
-AUTH_API_KEYS="myapp:sk_secret:admin" go run ./cmd/gateway
+AUTH_API_KEYS="myapp:sk_secret:admin" go run ./cmd/server
 ```
 
 Then pass `Authorization: Bearer sk_secret` on all requests.
@@ -58,14 +58,14 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `GATEWAY_LISTEN_ADDR` | Listen address | `:8080` |
+| `ZOEA_LISTEN_ADDR` | Listen address | `:8080` |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
 | `PI_DEFAULT_ARGS` | Default args for pi subprocess | `--mode rpc --no-session` |
-| `SESSIONS_BASE_DIR` | Working directory for sessions | `./.gateway-sessions` |
+| `SESSIONS_BASE_DIR` | Working directory for sessions | `./.zoea-sessions` |
 | `AUTH_API_KEYS` | API keys (enables auth) | empty |
-| `GATEWAY_BEHIND_PROXY` | Treat all connections as remote | empty |
+| `ZOEA_BEHIND_PROXY` | Treat all connections as remote | empty |
 | `STORE_DRIVER` | Storage backend | `sqlite` |
-| `STORE_DSN` | Database path / connection string | `./.gateway.db` |
+| `STORE_DSN` | Database path / connection string | `./.zoea.db` |
 
 ## Tests
 

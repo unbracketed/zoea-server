@@ -2,7 +2,7 @@
 
 ## Goal
 
-Single auth gate middleware that protects all gateway routes. Zero-config for local dev, API key auth for bridges and services, optional JWT for external identity providers, proxy-aware.
+Single auth gate middleware that protects all server routes. Zero-config for local dev, API key auth for bridges and services, optional JWT for external identity providers, proxy-aware.
 
 Inspired by Moltis's single `check_auth()` design — one function, one place, every request.
 
@@ -18,7 +18,7 @@ Inspired by Moltis's single `check_auth()` design — one function, one place, e
 | **2 — Remote lockout** | No credentials configured + remote/proxied | 401 Unauthorized |
 | **3 — Full auth** | Any credentials configured | Auth always required |
 
-This means `go run ./cmd/gateway` works immediately with no config. The moment you set `AUTH_API_KEYS` or `AUTH_JWKS_URL`, or deploy behind a proxy, auth is enforced.
+This means `go run ./cmd/server` works immediately with no config. The moment you set `AUTH_API_KEYS` or `AUTH_JWKS_URL`, or deploy behind a proxy, auth is enforced.
 
 ### Decision Matrix
 
@@ -37,7 +37,7 @@ Single `CheckAuth()` function, evaluated in order:
 
 A connection is local only when **all** checks pass (borrowed from Moltis):
 
-1. `GATEWAY_BEHIND_PROXY` is **not** set
+1. `ZOEA_BEHIND_PROXY` is **not** set
 2. No proxy headers present (`X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`, `Forwarded`)
 3. The TCP remote address is loopback (`127.0.0.1`, `::1`)
 
@@ -77,7 +77,7 @@ Handlers can read identity from context for logging and session ownership checks
 | `AUTH_JWKS_URL` | JWKS endpoint URL for JWT validation | empty (JWT disabled) |
 | `AUTH_JWT_ISSUER` | Expected JWT `iss` claim | empty (not checked) |
 | `AUTH_JWT_AUDIENCE` | Expected JWT `aud` claim | empty (not checked) |
-| `GATEWAY_BEHIND_PROXY` | Force all connections to be treated as remote | empty (false) |
+| `ZOEA_BEHIND_PROXY` | Force all connections to be treated as remote | empty (false) |
 
 ### API key format
 
@@ -238,9 +238,9 @@ type Config struct {
 }
 ```
 
-Parse `AUTH_API_KEYS`, `AUTH_JWKS_URL`, `AUTH_JWT_ISSUER`, `AUTH_JWT_AUDIENCE`, `GATEWAY_BEHIND_PROXY` from env.
+Parse `AUTH_API_KEYS`, `AUTH_JWKS_URL`, `AUTH_JWT_ISSUER`, `AUTH_JWT_AUDIENCE`, `ZOEA_BEHIND_PROXY` from env.
 
-### 10. `cmd/gateway/main.go`
+### 10. `cmd/server/main.go`
 
 Wire the middleware:
 
@@ -252,8 +252,8 @@ srv := &http.Server{Addr: cfg.ListenAddr, Handler: handler}
 
 Log auth mode on startup:
 ```
-gateway listening on :9090 (auth: api-key, 2 keys configured)
-gateway listening on :9090 (auth: disabled, local-only access)
+zoea-server listening on :9090 (auth: api-key, 2 keys configured)
+zoea-server listening on :9090 (auth: disabled, local-only access)
 ```
 
 ### 11. `internal/api/handler.go`
@@ -325,7 +325,7 @@ Endpoint scope map:
 
 ### Integration test
 
-1. Start gateway with `AUTH_API_KEYS=test:sk_test123:admin`
+1. Start server with `AUTH_API_KEYS=test:sk_test123:admin`
 2. `POST /v1/sessions` without auth → 401
 3. `POST /v1/sessions` with `Authorization: Bearer sk_test123` → 201
 4. `GET /healthz` without auth → 200 (public path)
@@ -343,7 +343,7 @@ Endpoint scope map:
 6. **`internal/auth/middleware.go`** — HTTP middleware + context helpers
 7. **`internal/auth/ratelimit.go`** — pre-auth rate limiter
 8. **`internal/config/config.go`** — parse auth env vars
-9. **`cmd/gateway/main.go`** — wire middleware
+9. **`cmd/server/main.go`** — wire middleware
 10. **`internal/api/handler.go`** — add scope checks to endpoints
 11. **`internal/auth/jwt.go`** — JWT validation (can be deferred if not needed immediately)
 12. **Build + test** — `go build ./...` + `go test ./...`

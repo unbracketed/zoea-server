@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/brian/go-agent-gateway/internal/gateway"
-	"github.com/brian/go-agent-gateway/internal/process"
-	"github.com/brian/go-agent-gateway/internal/store"
+	"github.com/unbracketed/zoea-server/internal/gateway"
+	"github.com/unbracketed/zoea-server/internal/process"
+	"github.com/unbracketed/zoea-server/internal/store"
 )
 
 var ErrNotFound = errors.New("session not found")
@@ -36,11 +36,11 @@ type ListQuery struct {
 }
 
 type Manager struct {
-	mu       sync.RWMutex
-	counter  uint64
-	handles  map[string]process.AgentHandle // runtime handles only
-	pm       process.Manager
-	store    store.Store
+	mu      sync.RWMutex
+	counter uint64
+	handles map[string]process.AgentHandle // runtime handles only
+	pm      process.Manager
+	store   store.Store
 }
 
 func NewManager(pm process.Manager, st store.Store) *Manager {
