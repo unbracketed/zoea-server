@@ -238,6 +238,137 @@ func TestReplaceSessionMessages(t *testing.T) {
 	}
 }
 
+func TestSchemaContainsRawJSON(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	rows, err := s.(*SQLiteStore).db.QueryContext(ctx, `PRAGMA table_info(session_messages)`)
+	if err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	defer rows.Close()
+
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if name == "raw_json" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected session_messages.raw_json column to exist")
+	}
+}
+
+func TestReplaceSessionMessagesPersistsRawJSON(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	rec := SessionRecord{ID: "s_000001", UserID: "a", Status: "active", CreatedAt: now, LastActiveAt: now}
+	if err := s.CreateSession(ctx, rec); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	rawJSON := `{"role":"assistant","content":[{"type":"text","text":"Hi"}],"timestamp":1777598491267}`
+	msgs := []MessageRecord{{
+		SessionID: "s_000001",
+		Role:      "assistant",
+		Content:   "Hi",
+		Model:     "gpt-5.4",
+		UsageJSON: `{"input":12,"output":9}`,
+		RawJSON:   rawJSON,
+		Timestamp: now,
+	}}
+	if err := s.ReplaceSessionMessages(ctx, "s_000001", msgs); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+
+	var gotRaw, gotModel, gotUsage string
+	err := s.(*SQLiteStore).db.QueryRowContext(ctx,
+		`SELECT raw_json, model, usage_json FROM session_messages WHERE session_id = ?`,
+		"s_000001",
+	).Scan(&gotRaw, &gotModel, &gotUsage)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if gotRaw != rawJSON {
+		t.Fatalf("raw_json mismatch:\n got: %s\nwant: %s", gotRaw, rawJSON)
+	}
+	if gotModel != "gpt-5.4" {
+		t.Fatalf("model: got %q", gotModel)
+	}
+	if gotUsage != `{"input":12,"output":9}` {
+		t.Fatalf("usage_json: got %q", gotUsage)
+	}
+}
+
+func TestMigrationAddsRawJSONColumn(t *testing.T) {
+	// Open a fresh DB and create a pre-migration schema (no raw_json column),
+	// then run Init and verify the migration adds the column without error.
+	db, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	// Create the pre-migration session_messages table manually.
+	_, err = db.db.ExecContext(ctx, `
+		CREATE TABLE session_messages (
+		    id INTEGER PRIMARY KEY AUTOINCREMENT,
+		    session_id TEXT NOT NULL,
+		    role TEXT NOT NULL,
+		    content TEXT,
+		    model TEXT,
+		    usage_json TEXT,
+		    timestamp TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		t.Fatalf("create pre-migration schema: %v", err)
+	}
+
+	// Run Init — which should ALTER TABLE to add raw_json.
+	if err := db.Init(ctx); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	// Confirm column exists now.
+	rows, err := db.db.QueryContext(ctx, `PRAGMA table_info(session_messages)`)
+	if err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if name == "raw_json" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected raw_json column after migration")
+	}
+
+	// Running Init a second time should be idempotent.
+	if err := db.Init(ctx); err != nil {
+		t.Fatalf("second init: %v", err)
+	}
+}
+
 func TestGetMaxSessionID(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

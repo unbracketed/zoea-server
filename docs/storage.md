@@ -50,10 +50,13 @@ Message history is captured at the end of each agent run:
 | `id` | INTEGER (PK) | Auto-increment row ID |
 | `session_id` | TEXT (FK) | References `sessions.id` |
 | `role` | TEXT | Message role (`user`, `assistant`) |
-| `content` | TEXT | Message text content |
+| `content` | TEXT | Flattened plain-text preview (best-effort, for display/search/debug) |
 | `model` | TEXT | Model used (when available) |
 | `usage_json` | TEXT | Token usage JSON (when available) |
+| `raw_json` | TEXT | Full Pi message JSON — source of truth for rich retrieval |
 | `timestamp` | TEXT | ISO 8601 timestamp |
+
+`raw_json` stores the unflattened Pi message object so that future rich retrievals (e.g. for a web UI) can reconstruct the original transcript structure — thinking blocks, tool calls, tool results, usage, stop reason, provider and model metadata. `content` remains a simple text preview for legacy clients and quick display.
 
 ## Schema
 
@@ -76,6 +79,7 @@ CREATE TABLE IF NOT EXISTS session_messages (
     content TEXT,
     model TEXT,
     usage_json TEXT,
+    raw_json TEXT,
     timestamp TEXT NOT NULL,
     FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
@@ -104,11 +108,20 @@ Convention for bridge external IDs: `platform:platform_id` (e.g. `telegram:98765
 Messages are persisted automatically when an agent run completes:
 
 1. A background listener watches for `agent.run.end` events on each session
-2. On run end, the server calls `get_messages` on the Pi subprocess to get the full history
-3. The entire message history is written to `session_messages`, replacing any previous snapshot
-4. If `get_messages` fails, the server falls back to parsing messages from the `agent.run.end` event payload
+2. On run end, the server calls `get_messages` on the Pi subprocess to get the full raw history
+3. For each raw message, the server extracts a flattened preview (`content`), `role`, `model`, `usage_json`, and `timestamp`, and stores the full unflattened JSON in `raw_json`
+4. The entire message history is written to `session_messages`, replacing any previous snapshot
+5. If `get_messages` fails, the server falls back to parsing raw messages from the `agent.run.end` event payload
 
 This means `session_messages` always reflects the latest complete conversation state. Messages are replaced (not appended) because Pi manages its own context window, including compaction.
+
+### Schema migrations
+
+When the server starts, it runs additive migrations to bring older databases up to the latest schema. Currently:
+
+- `ALTER TABLE session_messages ADD COLUMN raw_json TEXT` — adds the raw transcript column to pre-existing DBs
+
+Migrations are idempotent and tolerate columns that already exist.
 
 ## Session ID continuity
 

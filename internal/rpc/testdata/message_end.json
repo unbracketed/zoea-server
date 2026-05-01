@@ -1,0 +1,1 @@
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Hi there"}],"stopReason":"stop","timestamp":1777598491274,"usage":{"input":12,"output":9}}}

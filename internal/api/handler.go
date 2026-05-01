@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/unbracketed/zoea-server/internal/auth"
+	"github.com/unbracketed/zoea-server/internal/glimpse"
 	"github.com/unbracketed/zoea-server/internal/process"
 	"github.com/unbracketed/zoea-server/internal/session"
 	"github.com/unbracketed/zoea-server/internal/store"
@@ -18,6 +19,7 @@ import (
 
 type Handler struct {
 	sessions *session.Manager
+	glimpse  *glimpse.Registry
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -28,7 +30,10 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 func NewHandler(sm *session.Manager) *Handler {
-	return &Handler{sessions: sm}
+	return &Handler{
+		sessions: sm,
+		glimpse:  glimpse.NewRegistry(),
+	}
 }
 
 func (h *Handler) Routes() http.Handler {
@@ -37,6 +42,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/readyz", h.handleReady)
 	mux.HandleFunc("/v1/sessions", h.handleSessions)
 	mux.HandleFunc("/v1/sessions/", h.handleSessionByID)
+	mux.HandleFunc("/api/glimpse/v1/render", h.handleGlimpseRender)
+	mux.HandleFunc("/api/glimpse/v1/action", h.handleGlimpseAction)
+	mux.HandleFunc("/api/glimpse/v1/cancel", h.handleGlimpseCancel)
 	return mux
 }
 
@@ -202,12 +210,37 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		if !h.requireScope(w, r, "sessions.read") {
 			return
 		}
-		msgs, err := s.Messages(r.Context())
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
+		format := r.URL.Query().Get("format")
+		if format == "" {
+			format = "text"
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+		switch format {
+		case "text":
+			msgs, err := s.Messages(r.Context())
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"format":   "text",
+				"messages": msgs,
+			})
+		case "raw":
+			msgs, err := s.MessagesRaw(r.Context())
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+			if msgs == nil {
+				msgs = []json.RawMessage{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"format":   "raw",
+				"messages": msgs,
+			})
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid format"})
+		}
 		return
 
 	case action == "messages" && r.Method == http.MethodPost:

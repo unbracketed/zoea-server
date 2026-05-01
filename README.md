@@ -45,6 +45,9 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 | `POST` | `/v1/sessions/{id}/abort` | `sessions.write` | Abort operation |
 | `GET` | `/v1/sessions/{id}/stream` | `sessions.read` | WebSocket event stream |
 | `DELETE` | `/v1/sessions/{id}` | `sessions.write` | Delete session |
+| `POST` | `/api/glimpse/v1/render` | `glimpse.render` | BASIL Glimpse blocking render request |
+| `POST` | `/api/glimpse/v1/action` | `glimpse.action` | Browser submits Glimpse action |
+| `POST` | `/api/glimpse/v1/cancel` | `glimpse.action` | Browser cancels Glimpse render |
 
 ## Documentation
 
@@ -59,6 +62,7 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 | Variable | Purpose | Default |
 |---|---|---|
 | `ZOEA_LISTEN_ADDR` | Listen address | `:8080` |
+| `ZOEA_LISTEN_PORT` | Listen port shorthand | empty |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
 | `PI_DEFAULT_ARGS` | Default args for pi subprocess | `--mode rpc --no-session` |
 | `SESSIONS_BASE_DIR` | Working directory for sessions | `./.zoea-sessions` |
@@ -72,3 +76,7 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 ```bash
 go test ./...
 ```
+
+
+## exe.dev
+

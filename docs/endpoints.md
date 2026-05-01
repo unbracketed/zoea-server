@@ -121,12 +121,57 @@ Get the message history of a session.
 
 **Scope:** `sessions.read`
 
-**Response** `200`
+**Query parameters:**
+
+| Param | Type | Description |
+|---|---|---|
+| `format` | string | `text` (default) returns flattened plain-text content; `raw` returns full Pi message JSON for rich UI rendering |
+
+**Response** `200` (`format=text`, default)
 ```json
 {
-  "messages": [ ... ]
+  "format": "text",
+  "messages": [
+    {"role": "user", "content": "Hello"},
+    {"role": "assistant", "content": "Hi there"}
+  ]
 }
 ```
+
+**Response** `200` (`format=raw`)
+
+Returns the decoded Pi `get_messages` payload with no flattening. Each entry is the full Pi message object — including `content` blocks (`text`, `thinking`, tool calls, tool results), `usage`, `stopReason`, `timestamp`, `provider`, `model`, etc. — exactly as Pi produced it.
+
+```json
+{
+  "format": "raw",
+  "messages": [
+    {
+      "role": "user",
+      "content": [{"type": "text", "text": "Hello"}],
+      "timestamp": 1777598491267
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "thinking", "thinking": "..."},
+        {"type": "text", "text": "Hi there"}
+      ],
+      "usage": {"input": 12, "output": 9, "cost": {"total": 0.001}},
+      "stopReason": "stop",
+      "timestamp": 1777598491274,
+      "provider": "openai-codex",
+      "model": "gpt-5.4"
+    }
+  ]
+}
+```
+
+**Errors:**
+
+| Status | Condition |
+|---|---|
+| `400` | Unknown `format` value |
 
 ---
 
@@ -227,6 +272,217 @@ Events are JSON frames streamed from the agent. Each event includes a `session_i
 **Connection behavior:**
 - Server sends WebSocket pings every 20 seconds
 - Connection closes when the session is deleted or the server shuts down
+
+---
+
+## Glimpse endpoints
+
+These endpoints implement the BASIL Glimpse delivery and correlation layer. BASIL's `ZoeaTransport` posts a render request, Zoea broadcasts a `glimpse.render` event to the target session's WebSocket, the client submits an action or cancel callback, and Zoea returns a single terminal response to the waiting transport call. See [docs/specs/zoea-glimpse-integration-spec.md](specs/zoea-glimpse-integration-spec.md) and [docs/specs/zoea-glimpse-server-addendum.md](specs/zoea-glimpse-server-addendum.md).
+
+**Presentation is client-owned.** The server guarantees delivery, correlation, timeout, and authorization. The client decides how to display the prompt — modal, side panel, separate surface, anything else — and Zoea never inspects the surface, the HTML, or the payloads.
+
+The two scopes used here:
+
+| Scope | Permissions |
+|---|---|
+| `glimpse.render` | Submit blocking render requests (BASIL → Zoea) |
+| `glimpse.action` | Submit action/cancel callbacks (browser → Zoea) |
+
+### `POST /api/glimpse/v1/render`
+
+Blocking endpoint. Returns when the user submits an action, dismisses the prompt, the request times out, or the target session is busy.
+
+**Scope:** `glimpse.render`
+
+**Request body:**
+```json
+{
+  "type": "render",
+  "request": {
+    "request_id": "9f2d...",
+    "flow_id": "2d6b...",
+    "surface": { "step_id": "pick_items", "title": "Pick items", "...": "..." },
+    "timeout_seconds": 300,
+    "hints": { "preferred_mode": "panel" }
+  },
+  "html": "<base64-encoded full HTML document>",
+  "target": {
+    "session_id": "s_000001",
+    "conversation_id": "optional",
+    "user_id": "optional"
+  }
+}
+```
+
+The `html` field is the complete self-contained HTML produced by BASIL, base64-encoded. Zoea forwards it unchanged to the target session. The `hints` field, if present, is forwarded verbatim — clients may use it as advisory presentation metadata or ignore it. Zoea never reads `surface`.
+
+**Successful response — action** `200`
+```json
+{
+  "type": "action",
+  "request_id": "9f2d...",
+  "payload": {
+    "request_id": "9f2d...",
+    "action_id": "continue",
+    "raw": { "field_id": "value" }
+  }
+}
+```
+
+The `payload` is the raw `window.glimpse.send(...)` body, forwarded with no reshaping.
+
+**Successful response — cancelled** `200`
+```json
+{
+  "type": "cancelled",
+  "request_id": "9f2d..."
+}
+```
+
+**Successful response — timeout** `200`
+```json
+{
+  "type": "error",
+  "request_id": "9f2d...",
+  "error": "no action received before timeout",
+  "fatal": false
+}
+```
+
+**Busy** `409`
+
+When the target session already has an active Glimpse render:
+```json
+{
+  "type": "busy",
+  "request_id": "9f2d...",
+  "active_request_id": "7a11...",
+  "error": "session already has an active glimpse render"
+}
+```
+
+**Errors:**
+
+| Status | Condition |
+|---|---|
+| `400` | Missing `request_id`, `html`, or `target.session_id` |
+| `404` | Target session does not exist |
+| `409` | Session busy (above) or duplicate `request_id` |
+
+---
+
+### `POST /api/glimpse/v1/action`
+
+Client callback that submits the user's form action.
+
+**Scope:** `glimpse.action`
+
+**Request body:**
+```json
+{
+  "request_id": "9f2d...",
+  "payload": {
+    "request_id": "9f2d...",
+    "action_id": "continue",
+    "raw": { "field_id": "value" }
+  }
+}
+```
+
+The `payload.raw` field is forwarded to the waiting render call without any server-side reshaping. BASIL is responsible for interpreting groups, captures, and result structure.
+
+**Response** `200`
+```json
+{ "ok": true }
+```
+
+**Errors:**
+
+| Status | Condition |
+|---|---|
+| `400` | Missing `request_id` or `payload` |
+| `403` | Caller lacks `glimpse.action` scope |
+| `404` | Unknown `request_id` (no pending render) |
+| `409` | Render already resolved (cancel/timeout/duplicate submission) |
+
+---
+
+### `POST /api/glimpse/v1/cancel`
+
+Client callback that resolves a pending render as cancelled. Use when the user dismisses the prompt, navigates away, or otherwise abandons the surface — whatever shape that surface takes.
+
+**Scope:** `glimpse.action`
+
+**Request body:**
+```json
+{ "request_id": "9f2d..." }
+```
+
+**Response** `200`
+```json
+{ "ok": true }
+```
+
+**Errors:**
+
+| Status | Condition |
+|---|---|
+| `400` | Missing `request_id` |
+| `403` | Caller lacks `glimpse.action` scope |
+| `404` | Unknown `request_id` |
+| `409` | Render already resolved |
+
+---
+
+### WebSocket event: `glimpse.render`
+
+Pushed over the existing `GET /v1/sessions/{id}/stream` WebSocket when a render is registered for that session. This is a delivery signal — *"a client for this session should present this Glimpse surface somehow"* — not a UI command tied to any particular shell. The client decides how to render it.
+
+To run the BASIL HTML directly, the client decodes `html` (base64), displays it inside whatever container it prefers, installs a `window.glimpse.send` bridge, and POSTs the resulting payload to `/api/glimpse/v1/action`. Clients that present the prompt differently are free to do so; the only contract is that they eventually call `/action` or `/cancel`.
+
+```json
+{
+  "type": "glimpse.render",
+  "session_id": "s_000001",
+  "timestamp": "2026-05-01T01:21:31.234Z",
+  "data": {
+    "request_id": "9f2d...",
+    "flow_id": "2d6b...",
+    "html": "<base64-encoded full HTML document>",
+    "timeout_seconds": 300,
+    "hints": { "preferred_mode": "panel" }
+  }
+}
+```
+
+`hints` is whatever BASIL provided in `request.hints`, forwarded verbatim. It is advisory only — clients may ignore it. Zoea does not interpret `surface` or any other BASIL-defined fields, so they do not appear in this event.
+
+### WebSocket event: `glimpse.close`
+
+Pushed when a render reaches a terminal state. This is a lifecycle event, not a layout instruction — clients may respond by closing a modal, clearing a panel, replacing content with a receipt, or doing nothing.
+
+```json
+{
+  "type": "glimpse.close",
+  "session_id": "s_000001",
+  "timestamp": "2026-05-01T01:21:42.118Z",
+  "data": {
+    "request_id": "9f2d...",
+    "reason": "completed",
+    "status": "action",
+    "action_id": "continue"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `request_id` | The render this close is for |
+| `reason` | One of `completed`, `cancelled`, `timed_out`, `error` |
+| `status` | Mirrors the terminal envelope returned to BASIL: `action`, `cancelled`, `timed_out`, `error` |
+| `action_id` | When `status=action`, the action_id the user submitted (advisory; useful for receipt UIs) |
+
+`status` and `action_id` are advisory. Clients that already track their own `/action` or `/cancel` response do not need them.
 
 ---
 

@@ -35,6 +35,7 @@ type MessageRecord struct {
 	Content   string
 	Model     string
 	UsageJSON string
+	RawJSON   string
 	Timestamp time.Time
 }
 

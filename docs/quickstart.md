@@ -87,6 +87,7 @@ All config is via environment variables. Defaults work for local dev.
 | Variable | Purpose | Default |
 |---|---|---|
 | `ZOEA_LISTEN_ADDR` | Listen address | `:8080` |
+| `ZOEA_LISTEN_PORT` | Listen port shorthand | empty |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
 | `PI_DEFAULT_ARGS` | Default args for pi subprocess | `--mode rpc --no-session` |
 | `SESSIONS_BASE_DIR` | Working directory for sessions | `./.zoea-sessions` |

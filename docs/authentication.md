@@ -71,6 +71,8 @@ Each API key has one or more scopes that control which endpoints it can access.
 |---|---|
 | `sessions.read` | Get state, get messages, list sessions, stream events |
 | `sessions.write` | Create sessions, send prompts, abort, delete |
+| `glimpse.render` | Submit blocking BASIL Glimpse render requests (BASIL → Zoea) |
+| `glimpse.action` | Submit Glimpse action/cancel callbacks (browser → Zoea) |
 | `admin` | Superset — grants all permissions |
 
 ### Endpoint scope requirements
@@ -86,6 +88,9 @@ Each API key has one or more scopes that control which endpoints it can access.
 | `POST /v1/sessions/{id}/abort` | `sessions.write` |
 | `GET /v1/sessions/{id}/stream` | `sessions.read` |
 | `DELETE /v1/sessions/{id}` | `sessions.write` |
+| `POST /api/glimpse/v1/render` | `glimpse.render` |
+| `POST /api/glimpse/v1/action` | `glimpse.action` |
+| `POST /api/glimpse/v1/cancel` | `glimpse.action` |
 
 A request with valid credentials but insufficient scope receives `403 Forbidden`:
 

@@ -33,9 +33,9 @@ func MapRPCLine(raw []byte) []gateway.Event {
 	case "turn_end":
 		return mapTurnEnd(raw)
 	case "message_start":
-		return one("agent.message.start", nil)
+		return mapMessageStart(raw)
 	case "message_end":
-		return one("agent.message.end", nil)
+		return mapMessageEnd(raw)
 	case "tool_execution_start":
 		return mapToolExecStart(raw)
 	case "tool_execution_update":
@@ -73,36 +73,106 @@ func mapMessageUpdate(raw []byte) []gateway.Event {
 
 	switch ame.Type {
 	case "text_start":
-		return one("agent.text.start", gateway.TextStart{})
+		return one("agent.text.start", gateway.TextStart{
+			ContentIndex: ame.ContentIndex,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "text_delta":
-		return one("agent.text.delta", gateway.TextDelta{Delta: ame.Delta})
+		return one("agent.text.delta", gateway.TextDelta{
+			ContentIndex: ame.ContentIndex,
+			Delta:        ame.Delta,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "text_end":
-		return one("agent.text.end", gateway.TextEnd{Content: ame.Content})
+		return one("agent.text.end", gateway.TextEnd{
+			ContentIndex: ame.ContentIndex,
+			Content:      ame.Content,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "thinking_start":
-		return one("agent.thinking.start", gateway.ThinkingStart{})
+		return one("agent.thinking.start", gateway.ThinkingStart{
+			ContentIndex: ame.ContentIndex,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "thinking_delta":
-		return one("agent.thinking.delta", gateway.ThinkingDelta{Delta: ame.Delta})
+		return one("agent.thinking.delta", gateway.ThinkingDelta{
+			ContentIndex: ame.ContentIndex,
+			Delta:        ame.Delta,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "thinking_end":
-		return one("agent.thinking.end", gateway.ThinkingEnd{})
+		return one("agent.thinking.end", gateway.ThinkingEnd{
+			ContentIndex: ame.ContentIndex,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "toolcall_start":
-		return one("agent.toolcall.start", gateway.ToolCallStart{ToolName: ame.ToolName})
+		return one("agent.toolcall.start", gateway.ToolCallStart{
+			ContentIndex: ame.ContentIndex,
+			ToolName:     ame.ToolName,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "toolcall_delta":
-		return one("agent.toolcall.delta", gateway.ToolCallDelta{Delta: ame.Delta})
+		return one("agent.toolcall.delta", gateway.ToolCallDelta{
+			ContentIndex: ame.ContentIndex,
+			Delta:        ame.Delta,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "toolcall_end":
-		return one("agent.toolcall.end", gateway.ToolCallEnd{ToolCall: ame.ToolCall})
+		return one("agent.toolcall.end", gateway.ToolCallEnd{
+			ContentIndex: ame.ContentIndex,
+			ToolCall:     ame.ToolCall,
+			Message:      mu.Message,
+			Partial:      ame.Partial,
+		})
 	case "done":
-		return one("agent.message.done", gateway.MessageDone{Reason: ame.Reason})
+		return one("agent.message.done", gateway.MessageDone{
+			Reason:  ame.Reason,
+			Message: mu.Message,
+			Partial: ame.Partial,
+		})
 	case "error":
-		return one("agent.message.error", gateway.MessageError{Reason: ame.Reason})
+		return one("agent.message.error", gateway.MessageError{
+			Reason:  ame.Reason,
+			Message: mu.Message,
+			Partial: ame.Partial,
+		})
 	case "start":
 		// "start" is the initial message generation signal; map it but it's low-value.
-		return one("agent.message.start", nil)
+		return one("agent.message.start", gateway.MessageStart{Message: mu.Message})
 	default:
 		return one("agent.unknown", gateway.Unknown{
 			EventType: "message_update." + ame.Type,
 			Raw:       raw,
 		})
 	}
+}
+
+func mapMessageStart(raw []byte) []gateway.Event {
+	var env struct {
+		Message json.RawMessage `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return one("agent.message.start", gateway.MessageStart{})
+	}
+	return one("agent.message.start", gateway.MessageStart{Message: env.Message})
+}
+
+func mapMessageEnd(raw []byte) []gateway.Event {
+	var env struct {
+		Message json.RawMessage `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return one("agent.message.end", gateway.MessageEnd{})
+	}
+	return one("agent.message.end", gateway.MessageEnd{Message: env.Message})
 }
 
 func mapAgentEnd(raw []byte) []gateway.Event {

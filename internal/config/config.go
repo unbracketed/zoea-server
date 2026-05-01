@@ -19,7 +19,7 @@ type Config struct {
 
 func LoadFromEnv() Config {
 	return Config{
-		ListenAddr:      envOrDefault("ZOEA_LISTEN_ADDR", ":8080"),
+		ListenAddr:      listenAddrFromEnv(),
 		PiBinPath:       envOrDefault("PI_BIN_PATH", "pi"),
 		PiArgs:          splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc --no-session")),
 		SessionsBaseDir: envOrDefault("SESSIONS_BASE_DIR", "./.zoea-sessions"),
@@ -33,6 +33,19 @@ func LoadFromEnv() Config {
 			BehindProxy: os.Getenv("ZOEA_BEHIND_PROXY") != "",
 		},
 	}
+}
+
+func listenAddrFromEnv() string {
+	if addr := os.Getenv("ZOEA_LISTEN_ADDR"); addr != "" {
+		return addr
+	}
+	if port := strings.TrimSpace(os.Getenv("ZOEA_LISTEN_PORT")); port != "" {
+		if strings.Contains(port, ":") {
+			return port
+		}
+		return ":" + port
+	}
+	return ":8080"
 }
 
 func envOrDefault(key, fallback string) string {

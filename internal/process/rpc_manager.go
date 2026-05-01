@@ -153,24 +153,40 @@ func (h *rpcHandle) GetState(ctx context.Context) (State, error) {
 }
 
 func (h *rpcHandle) GetMessages(ctx context.Context) ([]Message, error) {
+	rawMsgs, err := h.getMessagesResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Message, 0, len(rawMsgs))
+	for _, raw := range rawMsgs {
+		var m struct {
+			Role    string      `json:"role"`
+			Content interface{} `json:"content"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil {
+			continue
+		}
+		out = append(out, Message{Role: m.Role, Content: flattenContent(m.Content)})
+	}
+	return out, nil
+}
+
+func (h *rpcHandle) GetMessagesRaw(ctx context.Context) ([]json.RawMessage, error) {
+	return h.getMessagesResponse(ctx)
+}
+
+func (h *rpcHandle) getMessagesResponse(ctx context.Context) ([]json.RawMessage, error) {
 	resp, err := h.sendCommand(ctx, map[string]any{"type": "get_messages"})
 	if err != nil {
 		return nil, err
 	}
 	var data struct {
-		Messages []struct {
-			Role    string      `json:"role"`
-			Content interface{} `json:"content"`
-		} `json:"messages"`
+		Messages []json.RawMessage `json:"messages"`
 	}
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
 		return nil, fmt.Errorf("decode get_messages data: %w", err)
 	}
-	out := make([]Message, 0, len(data.Messages))
-	for _, m := range data.Messages {
-		out = append(out, Message{Role: m.Role, Content: flattenContent(m.Content)})
-	}
-	return out, nil
+	return data.Messages, nil
 }
 
 func flattenContent(content interface{}) string {
@@ -412,4 +428,10 @@ func (h *rpcHandle) broadcastGatewayEvent(e gateway.Event) {
 		default:
 		}
 	}
+}
+
+// Broadcast satisfies the AgentHandle interface and lets server-side bridges
+// (e.g. Glimpse) inject synthetic events into the existing WS stream.
+func (h *rpcHandle) Broadcast(e gateway.Event) {
+	h.broadcastGatewayEvent(e)
 }

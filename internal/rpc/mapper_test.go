@@ -53,6 +53,15 @@ func TestMapTextDelta(t *testing.T) {
 	if d.Delta != "Hello" {
 		t.Fatalf("expected delta 'Hello', got %q", d.Delta)
 	}
+	if d.ContentIndex != 0 {
+		t.Fatalf("expected content_index 0, got %d", d.ContentIndex)
+	}
+	if len(d.Message) == 0 {
+		t.Fatal("expected non-empty message")
+	}
+	if len(d.Partial) == 0 {
+		t.Fatal("expected non-empty partial")
+	}
 }
 
 func TestMapTextStart(t *testing.T) {
@@ -72,6 +81,12 @@ func TestMapThinkingDelta(t *testing.T) {
 	d := dataAs[gateway.ThinkingDelta](t, e)
 	if d.Delta != "Let me think..." {
 		t.Fatalf("expected delta 'Let me think...', got %q", d.Delta)
+	}
+	if len(d.Message) == 0 {
+		t.Fatal("expected non-empty message")
+	}
+	if len(d.Partial) == 0 {
+		t.Fatal("expected non-empty partial")
 	}
 }
 
@@ -105,6 +120,15 @@ func TestMapToolCallEnd(t *testing.T) {
 	if len(d.ToolCall) == 0 {
 		t.Fatal("expected non-empty tool_call")
 	}
+	if d.ContentIndex != 1 {
+		t.Fatalf("expected content_index 1, got %d", d.ContentIndex)
+	}
+	if len(d.Message) == 0 {
+		t.Fatal("expected non-empty message")
+	}
+	if len(d.Partial) == 0 {
+		t.Fatal("expected non-empty partial")
+	}
 }
 
 func TestMapMessageDone(t *testing.T) {
@@ -120,6 +144,24 @@ func TestMapMessageError(t *testing.T) {
 	d := dataAs[gateway.MessageError](t, e)
 	if d.Reason != "aborted" {
 		t.Fatalf("expected reason 'aborted', got %q", d.Reason)
+	}
+}
+
+// --- message lifecycle events ---
+
+func TestMapMessageStart(t *testing.T) {
+	e := requireOne(t, MapRPCLine(loadFixture(t, "message_start.json")), "agent.message.start")
+	d := dataAs[gateway.MessageStart](t, e)
+	if len(d.Message) == 0 {
+		t.Fatal("expected non-empty message")
+	}
+}
+
+func TestMapMessageEnd(t *testing.T) {
+	e := requireOne(t, MapRPCLine(loadFixture(t, "message_end.json")), "agent.message.end")
+	d := dataAs[gateway.MessageEnd](t, e)
+	if len(d.Message) == 0 {
+		t.Fatal("expected non-empty message")
 	}
 }
 

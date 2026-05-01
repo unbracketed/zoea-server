@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS session_messages (
     content TEXT,
     model TEXT,
     usage_json TEXT,
+    raw_json TEXT,
     timestamp TEXT NOT NULL,
     FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
@@ -50,19 +51,52 @@ func OpenSQLite(dsn string) (*SQLiteStore, error) {
 	if strings.TrimSpace(dsn) == "" {
 		dsn = "./.zoea.db"
 	}
+	// Apply pragmas per connection via DSN so they persist across the connection pool.
+	// busy_timeout makes concurrent readers/writers wait up to 5s instead of failing
+	// immediately with SQLITE_BUSY.
+	dsn = appendPragma(dsn, "_pragma=busy_timeout=5000")
+	dsn = appendPragma(dsn, "_pragma=foreign_keys=on")
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+	// Limit to a single writer connection: SQLite serializes writes anyway, and
+	// holding multiple writer connections can amplify SQLITE_BUSY contention.
+	db.SetMaxOpenConns(1)
 	return &SQLiteStore{db: db}, nil
 }
 
-func (s *SQLiteStore) Init(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
-		return fmt.Errorf("enable foreign_keys: %w", err)
+func appendPragma(dsn, pragma string) string {
+	if strings.Contains(dsn, "?") {
+		return dsn + "&" + pragma
 	}
+	return dsn + "?" + pragma
+}
+
+func (s *SQLiteStore) Init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, sqliteSchema); err != nil {
 		return fmt.Errorf("init sqlite schema: %w", err)
+	}
+	if err := s.migrate(ctx); err != nil {
+		return fmt.Errorf("migrate sqlite schema: %w", err)
+	}
+	return nil
+}
+
+// migrate applies additive schema migrations for existing DBs that pre-date a column.
+// Each migration is idempotent: if the column already exists, the ALTER fails with a
+// "duplicate column name" error which we tolerate.
+func (s *SQLiteStore) migrate(ctx context.Context) error {
+	migrations := []string{
+		`ALTER TABLE session_messages ADD COLUMN raw_json TEXT`,
+	}
+	for _, stmt := range migrations {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			if isDuplicateColumn(err) {
+				continue
+			}
+			return fmt.Errorf("apply migration %q: %w", stmt, err)
+		}
 	}
 	return nil
 }
@@ -211,8 +245,8 @@ func (s *SQLiteStore) ReplaceSessionMessages(ctx context.Context, sessionID stri
 
 	if len(msgs) > 0 {
 		stmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO session_messages (session_id, role, content, model, usage_json, timestamp)
-			VALUES (?, ?, ?, ?, ?, ?)
+			INSERT INTO session_messages (session_id, role, content, model, usage_json, raw_json, timestamp)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`)
 		if err != nil {
 			return err
@@ -227,6 +261,7 @@ func (s *SQLiteStore) ReplaceSessionMessages(ctx context.Context, sessionID stri
 				nullableString(m.Content),
 				nullableString(m.Model),
 				nullableString(m.UsageJSON),
+				nullableString(m.RawJSON),
 				toTS(m.Timestamp),
 			); err != nil {
 				return err
@@ -316,4 +351,12 @@ func isUniqueConstraint(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique constraint failed") || strings.Contains(msg, "constraint failed")
+}
+
+func isDuplicateColumn(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column name")
 }

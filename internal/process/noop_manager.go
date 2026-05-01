@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	"github.com/unbracketed/zoea-server/internal/gateway"
@@ -60,6 +61,23 @@ func (h *noopHandle) GetMessages(_ context.Context) ([]Message, error) {
 	return out, nil
 }
 
+func (h *noopHandle) GetMessagesRaw(_ context.Context) ([]json.RawMessage, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]json.RawMessage, 0, len(h.messages))
+	for _, m := range h.messages {
+		b, err := json.Marshal(map[string]any{
+			"role":    m.Role,
+			"content": []map[string]any{{"type": "text", "text": m.Content}},
+		})
+		if err != nil {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
 func (h *noopHandle) Subscribe(ctx context.Context) (<-chan gateway.Event, func()) {
 	h.mu.Lock()
 	h.subID++
@@ -106,4 +124,12 @@ func (h *noopHandle) broadcastLocked(e gateway.Event) {
 		default:
 		}
 	}
+}
+
+// Broadcast satisfies the AgentHandle interface for synthetic events from
+// server-side bridges.
+func (h *noopHandle) Broadcast(e gateway.Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.broadcastLocked(e)
 }
