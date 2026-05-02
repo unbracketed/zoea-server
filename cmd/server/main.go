@@ -35,7 +35,7 @@ func main() {
 		log.Fatalf("init store: %v", err)
 	}
 
-	pm := process.NewRPCProcessManager(cfg.PiBinPath, cfg.PiArgs, cfg.SessionsBaseDir)
+	pm := process.NewRPCProcessManager(cfg.PiBinPath, cfg.PiArgs, cfg.SessionsBaseDir, cfg.DefaultWorkingDir)
 	sm := session.NewManager(pm, st)
 
 	if err := sm.Init(context.Background()); err != nil {

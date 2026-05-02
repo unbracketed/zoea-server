@@ -8,11 +8,14 @@ All configuration is done via environment variables. The defaults are intended t
 | `ZOEA_LISTEN_PORT` | Listen port shorthand | empty |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
 | `PI_DEFAULT_ARGS` | Default args for `pi` subprocess | `--mode rpc --no-session` |
-| `SESSIONS_BASE_DIR` | Working directory for sessions | `./.zoea-sessions` |
+| `SESSIONS_BASE_DIR` | Base directory for Pi session state/history | `./.zoea-sessions` |
+| `DEFAULT_WORKING_DIR` | Default working directory for all Pi subprocesses | empty |
 | `AUTH_API_KEYS` | API keys for auth (enables auth) | empty |
 | `ZOEA_BEHIND_PROXY` | Treat all connections as remote | empty |
 | `STORE_DRIVER` | Storage backend | `sqlite` |
 | `STORE_DSN` | Database path / connection string | `./.zoea.db` |
+
+If `DEFAULT_WORKING_DIR` is set, every Pi subprocess starts there. Pi session state/history still lives under `SESSIONS_BASE_DIR`. Per-request `working_dir` values are ignored while `DEFAULT_WORKING_DIR` is set.
 
 ## Storage
 

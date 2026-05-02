@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -10,12 +11,33 @@ import (
 	"testing"
 
 	"github.com/unbracketed/zoea-server/internal/auth"
+	"github.com/unbracketed/zoea-server/internal/gateway"
 	"github.com/unbracketed/zoea-server/internal/process"
 	"github.com/unbracketed/zoea-server/internal/session"
 	"github.com/unbracketed/zoea-server/internal/store"
 )
 
+func testCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func postJSON(t *testing.T, h http.Handler, path string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	req := adminCtx(httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
 func newTestHandler(t *testing.T) (*Handler, *session.Manager, store.Store) {
+	return newTestHandlerWithPM(t, process.NewNoopProcessManager())
+}
+
+func newTestHandlerWithPM(t *testing.T, pm process.Manager) (*Handler, *session.Manager, store.Store) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	st, err := store.OpenSQLite(dbPath)
@@ -27,13 +49,44 @@ func newTestHandler(t *testing.T) (*Handler, *session.Manager, store.Store) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	pm := process.NewNoopProcessManager()
 	sm := session.NewManager(pm, st)
 	if err := sm.Init(context.Background()); err != nil {
 		t.Fatalf("init sessions: %v", err)
 	}
 	return NewHandler(sm), sm, st
 }
+
+type recordingProcessManager struct {
+	lastOpts process.StartOptions
+}
+
+func (m *recordingProcessManager) Start(_ context.Context, opts process.StartOptions) (process.AgentHandle, error) {
+	m.lastOpts = opts
+	return recordingHandle{}, nil
+}
+
+type recordingHandle struct{}
+
+func (recordingHandle) Prompt(context.Context, process.PromptRequest) error { return nil }
+func (recordingHandle) Abort(context.Context) error                         { return nil }
+func (recordingHandle) GetState(context.Context) (process.State, error)     { return process.State{}, nil }
+func (recordingHandle) GetMessages(context.Context) ([]process.Message, error) {
+	return nil, nil
+}
+func (recordingHandle) GetMessagesRaw(context.Context) ([]json.RawMessage, error) {
+	return nil, nil
+}
+func (recordingHandle) Subscribe(context.Context) (<-chan gateway.Event, func()) {
+	ch := make(chan gateway.Event)
+	close(ch)
+	return ch, func() {}
+}
+func (recordingHandle) SendUIResponse(context.Context, process.UIResponse) error { return nil }
+func (recordingHandle) SendA2UIAction(context.Context, process.A2UIActionRequest) error {
+	return nil
+}
+func (recordingHandle) Broadcast(gateway.Event)     {}
+func (recordingHandle) Close(context.Context) error { return nil }
 
 func adminCtx(r *http.Request) *http.Request {
 	id := auth.AuthIdentity{Method: "test", Subject: "tester", Scopes: []string{"admin"}}
@@ -42,11 +95,32 @@ func adminCtx(r *http.Request) *http.Request {
 
 func createTestSession(t *testing.T, sm *session.Manager) string {
 	t.Helper()
-	s, err := sm.Create(context.Background(), "alice", "", "")
+	s, err := sm.Create(context.Background(), "alice", "", "", "")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	return s.ID
+}
+
+func TestCreateSessionPassesWorkingDir(t *testing.T) {
+	pm := &recordingProcessManager{}
+	h, _, _ := newTestHandlerWithPM(t, pm)
+	workingDir := t.TempDir()
+
+	rec := httptest.NewRecorder()
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"user_id":"alice","working_dir":"`+workingDir+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if pm.lastOpts.UserID != "alice" {
+		t.Fatalf("user_id: got %q", pm.lastOpts.UserID)
+	}
+	if pm.lastOpts.WorkingDir != workingDir {
+		t.Fatalf("working_dir: got %q want %q", pm.lastOpts.WorkingDir, workingDir)
+	}
 }
 
 // promptAndAwaitPersist sends a prompt and waits for the run.end event before

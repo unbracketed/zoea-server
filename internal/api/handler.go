@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/unbracketed/zoea-server/internal/a2ui"
 	"github.com/unbracketed/zoea-server/internal/auth"
-	"github.com/unbracketed/zoea-server/internal/glimpse"
+	"github.com/unbracketed/zoea-server/internal/gateway"
 	"github.com/unbracketed/zoea-server/internal/process"
 	"github.com/unbracketed/zoea-server/internal/session"
 	"github.com/unbracketed/zoea-server/internal/store"
@@ -19,7 +21,7 @@ import (
 
 type Handler struct {
 	sessions *session.Manager
-	glimpse  *glimpse.Registry
+	a2ui     *a2ui.State
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -32,7 +34,7 @@ var wsUpgrader = websocket.Upgrader{
 func NewHandler(sm *session.Manager) *Handler {
 	return &Handler{
 		sessions: sm,
-		glimpse:  glimpse.NewRegistry(),
+		a2ui:     a2ui.NewState(a2ui.Limits{}),
 	}
 }
 
@@ -42,9 +44,6 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/readyz", h.handleReady)
 	mux.HandleFunc("/v1/sessions", h.handleSessions)
 	mux.HandleFunc("/v1/sessions/", h.handleSessionByID)
-	mux.HandleFunc("/api/glimpse/v1/render", h.handleGlimpseRender)
-	mux.HandleFunc("/api/glimpse/v1/action", h.handleGlimpseAction)
-	mux.HandleFunc("/api/glimpse/v1/cancel", h.handleGlimpseCancel)
 	return mux
 }
 
@@ -76,6 +75,7 @@ func (h *Handler) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		UserID     string `json:"user_id"`
 		ProjectID  string `json:"project_id"`
 		ExternalID string `json:"external_id"`
+		WorkingDir string `json:"working_dir"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -85,7 +85,7 @@ func (h *Handler) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s, err := h.sessions.Create(r.Context(), req.UserID, req.ProjectID, req.ExternalID)
+	s, err := h.sessions.Create(r.Context(), req.UserID, req.ProjectID, req.ExternalID, req.WorkingDir)
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "external_id already exists"})
@@ -170,6 +170,10 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	action := ""
 	if len(parts) > 1 {
 		action = parts[1]
+	}
+	subAction := ""
+	if len(parts) > 2 {
+		subAction = parts[2]
 	}
 
 	// Delete doesn't require a live handle — allow deleting store-only records.
@@ -288,9 +292,88 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		h.handleSessionStream(w, r, sessionID, s)
 		return
 
+	case action == "a2ui" && subAction == "messages" && r.Method == http.MethodPost:
+		if !h.requireScope(w, r, "sessions.write") {
+			return
+		}
+		h.handleA2UIInjectMessages(w, r, sessionID, s)
+		return
+
 	default:
 		writeMethodNotAllowed(w)
 		return
+	}
+}
+
+// handleA2UIInjectMessages is the temporary server-side bridge described in
+// docs/specs/zoea-a2ui-session-broker.md. It accepts an A2UI v0.9 batch,
+// validates it, appends to the session's retained state, broadcasts an
+// agent.a2ui event, and returns the assigned seq. Removed once the runtime
+// emits A2UI batches natively.
+func (h *Handler) handleA2UIInjectMessages(w http.ResponseWriter, r *http.Request, sessionID string, s *session.Session) {
+	limits := h.a2ui.Limits()
+
+	r.Body = http.MaxBytesReader(w, r.Body, int64(limits.MaxRequestBodyBytes))
+	defer r.Body.Close()
+
+	var req struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{
+				"error": "request body exceeds limit",
+			})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+
+	result, err := h.a2ui.Append(sessionID, req.Messages)
+	if err != nil {
+		writeJSON(w, h.a2uiErrorStatus(err), map[string]any{"error": err.Error()})
+		return
+	}
+
+	// Build the broadcast event from the same canonical bytes we just stored
+	// so a late subscriber's snapshot and live tail agree on shape.
+	messagesJSON, marshalErr := json.Marshal(req.Messages)
+	if marshalErr != nil {
+		// Should not happen — we just decoded the same slice.
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": marshalErr.Error()})
+		return
+	}
+	s.Broadcast(gateway.NewEvent("agent.a2ui", gateway.A2UIBatch{
+		Version:  a2ui.ProtocolVersion,
+		Seq:      result.Seq,
+		Messages: messagesJSON,
+	}))
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"seq":          result.Seq,
+		"message_count": result.MessageCount,
+	})
+}
+
+// a2uiErrorStatus picks the right HTTP status for broker validation errors.
+// Validation problems are 400; retention overflow is 413 since the issue is
+// payload size relative to the session's bounded buffer.
+func (h *Handler) a2uiErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, a2ui.ErrEmptyBatch),
+		errors.Is(err, a2ui.ErrInvalidVersion),
+		errors.Is(err, a2ui.ErrInvalidCatalogID),
+		errors.Is(err, a2ui.ErrMessageMalformed):
+		return http.StatusBadRequest
+	case errors.Is(err, a2ui.ErrBatchTooLarge),
+		errors.Is(err, a2ui.ErrRetentionExceeded):
+		return http.StatusRequestEntityTooLarge
+	default:
+		return http.StatusInternalServerError
 	}
 }
 
@@ -306,6 +389,26 @@ func (h *Handler) handleSessionStream(w http.ResponseWriter, r *http.Request, se
 	events, unsubscribe := s.Subscribe(ctx)
 	defer unsubscribe()
 
+	// Replay the session's retained A2UI history so a late subscriber can
+	// reconstruct the current surface. Subscribe before snapshot so a batch
+	// arriving between the two is delivered live by the subscriber rather
+	// than missed by both paths; the client keys by seq and is responsible
+	// for skipping duplicates if both arrive.
+	if snap, ok := h.a2ui.Snapshot(sessionID); ok {
+		messagesJSON, err := json.Marshal(snap.Messages)
+		if err == nil {
+			replay := gateway.NewEvent("agent.a2ui.snapshot", gateway.A2UISnapshot{
+				Version:  snap.Version,
+				Seq:      snap.Seq,
+				Messages: messagesJSON,
+			})
+			replay.SessionID = sessionID
+			if err := conn.WriteJSON(replay); err != nil {
+				return
+			}
+		}
+	}
+
 	readDone := make(chan struct{})
 	go func() {
 		defer close(readDone)
@@ -319,6 +422,8 @@ func (h *Handler) handleSessionStream(w http.ResponseWriter, r *http.Request, se
 				_ = s.Abort(ctx)
 			case "ui_response":
 				h.handleWSUIResponse(ctx, s, msg)
+			case "a2ui.action":
+				h.handleWSA2UIAction(ctx, conn, s, msg)
 			}
 		}
 	}()
@@ -344,6 +449,79 @@ func (h *Handler) handleSessionStream(w http.ResponseWriter, r *http.Request, se
 			}
 		}
 	}
+}
+
+// handleWSA2UIAction validates an inbound a2ui.action frame, then routes it
+// through the process-layer seam. Errors land back on the WS as a synthetic
+// agent.a2ui.error event broadcast through the session — that keeps all
+// writes on the main loop's writer goroutine.
+func (h *Handler) handleWSA2UIAction(ctx context.Context, _ *websocket.Conn, s *session.Session, msg map[string]any) {
+	dataAny, ok := msg["data"].(map[string]any)
+	if !ok {
+		s.Broadcast(a2uiActionError("missing data field"))
+		return
+	}
+
+	messageRaw, err := json.Marshal(dataAny["message"])
+	if err != nil || len(messageRaw) == 0 || string(messageRaw) == "null" {
+		s.Broadcast(a2uiActionError("missing message field"))
+		return
+	}
+	if err := validateA2UIActionMessage(messageRaw); err != nil {
+		s.Broadcast(a2uiActionError(err.Error()))
+		return
+	}
+
+	req := process.A2UIActionRequest{Message: messageRaw}
+	if v, ok := dataAny["client_data_model"]; ok && v != nil {
+		if b, err := json.Marshal(v); err == nil {
+			req.ClientDataModel = b
+		}
+	}
+	if v, ok := dataAny["client_capabilities"]; ok && v != nil {
+		if b, err := json.Marshal(v); err == nil {
+			req.ClientCapabilities = b
+		}
+	}
+
+	if err := s.SendA2UIAction(ctx, req); err != nil {
+		s.Broadcast(a2uiActionError(err.Error()))
+	}
+}
+
+// validateA2UIActionMessage enforces the minimum invariants a runtime can
+// rely on: well-formed JSON object, version v0.9, and an action sub-object
+// with a name and surfaceId.
+func validateA2UIActionMessage(raw json.RawMessage) error {
+	var probe struct {
+		Version string `json:"version"`
+		Action  *struct {
+			Name      string `json:"name"`
+			SurfaceID string `json:"surfaceId"`
+		} `json:"action"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return errors.New("a2ui.action: message is not a JSON object")
+	}
+	if probe.Version != a2ui.ProtocolVersion {
+		return errors.New("a2ui.action: message.version must be " + a2ui.ProtocolVersion)
+	}
+	if probe.Action == nil {
+		return errors.New("a2ui.action: message.action is required")
+	}
+	if strings.TrimSpace(probe.Action.Name) == "" {
+		return errors.New("a2ui.action: message.action.name is required")
+	}
+	if strings.TrimSpace(probe.Action.SurfaceID) == "" {
+		return errors.New("a2ui.action: message.action.surfaceId is required")
+	}
+	return nil
+}
+
+func a2uiActionError(reason string) gateway.Event {
+	return gateway.NewEvent("agent.a2ui.error", map[string]any{
+		"error": reason,
+	})
 }
 
 func (h *Handler) handleWSUIResponse(ctx context.Context, s *session.Session, msg map[string]any) {

@@ -20,16 +20,18 @@ import (
 )
 
 type RPCProcessManager struct {
-	binPath         string
-	baseArgs        []string
-	sessionsBaseDir string
+	binPath           string
+	baseArgs          []string
+	sessionsBaseDir   string
+	defaultWorkingDir string
 }
 
-func NewRPCProcessManager(binPath string, baseArgs []string, sessionsBaseDir string) *RPCProcessManager {
+func NewRPCProcessManager(binPath string, baseArgs []string, sessionsBaseDir string, defaultWorkingDir string) *RPCProcessManager {
 	return &RPCProcessManager{
-		binPath:         binPath,
-		baseArgs:        append([]string{}, baseArgs...),
-		sessionsBaseDir: sessionsBaseDir,
+		binPath:           binPath,
+		baseArgs:          append([]string{}, baseArgs...),
+		sessionsBaseDir:   sessionsBaseDir,
+		defaultWorkingDir: strings.TrimSpace(defaultWorkingDir),
 	}
 }
 
@@ -38,14 +40,35 @@ func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHa
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
-
-	args := append([]string{}, m.baseArgs...)
-	if !hasArg(args, "--session-dir") {
-		args = append(args, "--session-dir", sessionDir)
+	absSessionDir, err := filepath.Abs(sessionDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve session dir: %w", err)
 	}
 
+	workingDir := absSessionDir
+	if m.defaultWorkingDir != "" {
+		workingDir = m.defaultWorkingDir
+	} else if strings.TrimSpace(opts.WorkingDir) != "" {
+		workingDir = strings.TrimSpace(opts.WorkingDir)
+	}
+	workingDir, err = filepath.Abs(workingDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve working dir: %w", err)
+	}
+	info, err := os.Stat(workingDir)
+	if err != nil {
+		return nil, fmt.Errorf("stat working dir: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("working dir is not a directory: %s", workingDir)
+	}
+
+	args := withArgValue(append([]string{}, m.baseArgs...), "--session-dir", absSessionDir)
+
 	cmd := exec.Command(m.binPath, args...)
-	cmd.Dir = sessionDir
+	cmd.Dir = workingDir
+	cmd.Env = os.Environ()
+	_ = opts // session/user metadata is tracked via the agent handle, not env
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -79,13 +102,18 @@ func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHa
 	return h, nil
 }
 
-func hasArg(args []string, key string) bool {
+func withArgValue(args []string, key, value string) []string {
 	for i := 0; i < len(args); i++ {
-		if args[i] == key {
-			return true
+		if args[i] != key {
+			continue
 		}
+		if i+1 < len(args) {
+			args[i+1] = value
+			return args
+		}
+		return append(args, value)
 	}
-	return false
+	return append(args, key, value)
 }
 
 type rpcEnvelope struct {
@@ -243,6 +271,34 @@ func (h *rpcHandle) SendUIResponse(_ context.Context, resp UIResponse) error {
 	_, err = h.stdin.Write(append(b, '\n'))
 	h.writeMu.Unlock()
 	return err
+}
+
+// SendA2UIAction forwards an A2UI v0.9 client action to the Pi runtime
+// via the same JSON-line RPC protocol used for prompts.
+//
+// The current Pi runtime does not yet implement an "a2ui_action" handler,
+// so a real send will surface as an error from sendCommand. We map any
+// such error to ErrA2UIUnsupported so the HTTP/WS layer can return a
+// stable "not supported" frame rather than leaking runtime-specific
+// wording. Once Pi gains native support, the runtime will return
+// success and this method becomes a transparent forwarder.
+func (h *rpcHandle) SendA2UIAction(ctx context.Context, req A2UIActionRequest) error {
+	payload := map[string]any{
+		"type": "a2ui_action",
+	}
+	if len(req.Message) > 0 {
+		payload["message"] = req.Message
+	}
+	if len(req.ClientDataModel) > 0 {
+		payload["client_data_model"] = req.ClientDataModel
+	}
+	if len(req.ClientCapabilities) > 0 {
+		payload["client_capabilities"] = req.ClientCapabilities
+	}
+	if _, err := h.sendCommand(ctx, payload); err != nil {
+		return fmt.Errorf("%w: %v", ErrA2UIUnsupported, err)
+	}
+	return nil
 }
 
 func (h *rpcHandle) Subscribe(ctx context.Context) (<-chan gateway.Event, func()) {
@@ -431,7 +487,7 @@ func (h *rpcHandle) broadcastGatewayEvent(e gateway.Event) {
 }
 
 // Broadcast satisfies the AgentHandle interface and lets server-side bridges
-// (e.g. Glimpse) inject synthetic events into the existing WS stream.
+// (e.g. the A2UI broker) inject synthetic events into the existing WS stream.
 func (h *rpcHandle) Broadcast(e gateway.Event) {
 	h.broadcastGatewayEvent(e)
 }

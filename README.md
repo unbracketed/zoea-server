@@ -45,9 +45,7 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 | `POST` | `/v1/sessions/{id}/abort` | `sessions.write` | Abort operation |
 | `GET` | `/v1/sessions/{id}/stream` | `sessions.read` | WebSocket event stream |
 | `DELETE` | `/v1/sessions/{id}` | `sessions.write` | Delete session |
-| `POST` | `/api/glimpse/v1/render` | `glimpse.render` | BASIL Glimpse blocking render request |
-| `POST` | `/api/glimpse/v1/action` | `glimpse.action` | Browser submits Glimpse action |
-| `POST` | `/api/glimpse/v1/cancel` | `glimpse.action` | Browser cancels Glimpse render |
+| `POST` | `/v1/sessions/{id}/a2ui/messages` | `sessions.write` | Inject an A2UI v0.9 batch (temporary bridge endpoint) |
 
 ## Documentation
 
@@ -65,7 +63,8 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 | `ZOEA_LISTEN_PORT` | Listen port shorthand | empty |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
 | `PI_DEFAULT_ARGS` | Default args for pi subprocess | `--mode rpc --no-session` |
-| `SESSIONS_BASE_DIR` | Working directory for sessions | `./.zoea-sessions` |
+| `SESSIONS_BASE_DIR` | Base directory for Pi session state/history | `./.zoea-sessions` |
+| `DEFAULT_WORKING_DIR` | Default working directory for all Pi subprocesses | empty |
 | `AUTH_API_KEYS` | API keys (enables auth) | empty |
 | `ZOEA_BEHIND_PROXY` | Treat all connections as remote | empty |
 | `STORE_DRIVER` | Storage backend | `sqlite` |

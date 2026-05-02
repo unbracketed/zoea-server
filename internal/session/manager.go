@@ -72,7 +72,7 @@ func (m *Manager) Init(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) Create(ctx context.Context, userID, projectID, externalID string) (*Session, error) {
+func (m *Manager) Create(ctx context.Context, userID, projectID, externalID, workingDir string) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -80,9 +80,10 @@ func (m *Manager) Create(ctx context.Context, userID, projectID, externalID stri
 	sid := fmt.Sprintf("s_%06d", m.counter)
 
 	h, err := m.pm.Start(ctx, process.StartOptions{
-		SessionID: sid,
-		UserID:    userID,
-		ProjectID: projectID,
+		SessionID:  sid,
+		UserID:     userID,
+		ProjectID:  projectID,
+		WorkingDir: workingDir,
 	})
 	if err != nil {
 		return nil, err
@@ -214,9 +215,17 @@ func (s *Session) SendUIResponse(ctx context.Context, resp process.UIResponse) e
 	return s.handle.SendUIResponse(ctx, resp)
 }
 
+// SendA2UIAction forwards an A2UI v0.9 client action to the underlying agent
+// runtime. Returns process.ErrA2UIUnsupported when the runtime hasn't
+// implemented A2UI input.
+func (s *Session) SendA2UIAction(ctx context.Context, req process.A2UIActionRequest) error {
+	s.LastActive = time.Now().UTC()
+	return s.handle.SendA2UIAction(ctx, req)
+}
+
 // Broadcast pushes a synthetic event to all current WS subscribers of this
-// session. Used by server-side bridges (e.g. Glimpse) that need to inject
-// events without going through the agent process.
+// session. Used by server-side bridges (e.g. the A2UI broker) that need to
+// inject events without going through the agent process.
 func (s *Session) Broadcast(event gateway.Event) {
 	s.LastActive = time.Now().UTC()
 	s.handle.Broadcast(event)
@@ -350,4 +359,3 @@ func parseRunEndRawMessages(evt gateway.Event) []json.RawMessage {
 	}
 	return rawMsgs
 }
-

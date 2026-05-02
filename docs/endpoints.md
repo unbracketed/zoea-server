@@ -41,6 +41,7 @@ Create a new agent session.
 {
   "user_id": "alice",
   "project_id": "my-project",
+  "working_dir": "/Users/alice/src/my-project",
   "external_id": "telegram:12345"
 }
 ```
@@ -49,6 +50,7 @@ Create a new agent session.
 |---|---|---|---|
 | `user_id` | string | yes | Identifies the user |
 | `project_id` | string | no | Optional project context |
+| `working_dir` | string | no | Optional Pi subprocess working directory; Pi session state/history still lives under `SESSIONS_BASE_DIR`. Ignored if server `DEFAULT_WORKING_DIR` is set. |
 | `external_id` | string | no | Unique external identifier (e.g. for bridge lookup) |
 
 **Response** `201`
@@ -259,6 +261,7 @@ Events are JSON frames streamed from the agent. Each event includes a `session_i
 |---|---|
 | `{"type": "abort"}` | Abort the current agent operation |
 | `{"type": "ui_response", "id": "...", ...}` | Respond to a UI prompt from the agent |
+| `{"type": "a2ui.action", "data": {...}}` | Forward an A2UI v0.9 client action — see [A2UI session broker](#a2ui-session-broker) below |
 
 **UI response fields:**
 
@@ -275,89 +278,41 @@ Events are JSON frames streamed from the agent. Each event includes a `session_i
 
 ---
 
-## Glimpse endpoints
+## A2UI session broker
 
-These endpoints implement the BASIL Glimpse delivery and correlation layer. BASIL's `ZoeaTransport` posts a render request, Zoea broadcasts a `glimpse.render` event to the target session's WebSocket, the client submits an action or cancel callback, and Zoea returns a single terminal response to the waiting transport call. See [docs/specs/zoea-glimpse-integration-spec.md](specs/zoea-glimpse-integration-spec.md) and [docs/specs/zoea-glimpse-server-addendum.md](specs/zoea-glimpse-server-addendum.md).
+Zoea brokers [A2UI v0.9](https://a2ui.org/) batches between the agent runtime and a teammate's browser session. The server retains a replayable per-session message history, broadcasts each new batch over the existing session WebSocket, and replays a snapshot to a late subscriber. See [docs/specs/zoea-a2ui-session-broker.md](specs/zoea-a2ui-session-broker.md) for the full design.
 
-**Presentation is client-owned.** The server guarantees delivery, correlation, timeout, and authorization. The client decides how to display the prompt — modal, side panel, separate surface, anything else — and Zoea never inspects the surface, the HTML, or the payloads.
+**Presentation is client-owned.** The server treats every A2UI message as opaque JSON — it never interprets component semantics. It only validates protocol version, batch size, and (when present) the `createSurface.catalogId` against an allowed catalog list.
 
-The two scopes used here:
+Pinned protocol version: `v0.9`. The only catalog accepted today is `https://a2ui.org/specification/v0_9/basic_catalog.json`.
 
-| Scope | Permissions |
-|---|---|
-| `glimpse.render` | Submit blocking render requests (BASIL → Zoea) |
-| `glimpse.action` | Submit action/cancel callbacks (browser → Zoea) |
+### `POST /v1/sessions/{id}/a2ui/messages`
 
-### `POST /api/glimpse/v1/render`
+**Temporary bridge endpoint.** Use for development and integration work until the runtime emits A2UI batches natively. Validates the batch, appends it to the session's retained state, assigns the next `seq`, and broadcasts an `agent.a2ui` event to subscribers.
 
-Blocking endpoint. Returns when the user submits an action, dismisses the prompt, the request times out, or the target session is busy.
-
-**Scope:** `glimpse.render`
+**Scope:** `sessions.write`
 
 **Request body:**
 ```json
 {
-  "type": "render",
-  "request": {
-    "request_id": "9f2d...",
-    "flow_id": "2d6b...",
-    "surface": { "step_id": "pick_items", "title": "Pick items", "...": "..." },
-    "timeout_seconds": 300,
-    "hints": { "preferred_mode": "panel" }
-  },
-  "html": "<base64-encoded full HTML document>",
-  "target": {
-    "session_id": "s_000001",
-    "conversation_id": "optional",
-    "user_id": "optional"
-  }
+  "messages": [
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "main",
+        "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
+        "sendDataModel": true
+      }
+    }
+  ]
 }
 ```
 
-The `html` field is the complete self-contained HTML produced by BASIL, base64-encoded. Zoea forwards it unchanged to the target session. The `hints` field, if present, is forwarded verbatim — clients may use it as advisory presentation metadata or ignore it. Zoea never reads `surface`.
-
-**Successful response — action** `200`
+**Response** `202`
 ```json
 {
-  "type": "action",
-  "request_id": "9f2d...",
-  "payload": {
-    "request_id": "9f2d...",
-    "action_id": "continue",
-    "raw": { "field_id": "value" }
-  }
-}
-```
-
-The `payload` is the raw `window.glimpse.send(...)` body, forwarded with no reshaping.
-
-**Successful response — cancelled** `200`
-```json
-{
-  "type": "cancelled",
-  "request_id": "9f2d..."
-}
-```
-
-**Successful response — timeout** `200`
-```json
-{
-  "type": "error",
-  "request_id": "9f2d...",
-  "error": "no action received before timeout",
-  "fatal": false
-}
-```
-
-**Busy** `409`
-
-When the target session already has an active Glimpse render:
-```json
-{
-  "type": "busy",
-  "request_id": "9f2d...",
-  "active_request_id": "7a11...",
-  "error": "session already has an active glimpse render"
+  "seq": 1,
+  "message_count": 1
 }
 ```
 
@@ -365,124 +320,119 @@ When the target session already has an active Glimpse render:
 
 | Status | Condition |
 |---|---|
-| `400` | Missing `request_id`, `html`, or `target.session_id` |
-| `404` | Target session does not exist |
-| `409` | Session busy (above) or duplicate `request_id` |
+| `400` | Empty batch, malformed message, missing/wrong `version`, or unknown catalog id |
+| `403` | Caller lacks `sessions.write` scope |
+| `404` | Session not found |
+| `413` | Batch too large or session retention buffer would overflow |
 
----
+Default limits (see [the spec](specs/zoea-a2ui-session-broker.md#validation-rules) for rationale):
 
-### `POST /api/glimpse/v1/action`
-
-Client callback that submits the user's form action.
-
-**Scope:** `glimpse.action`
-
-**Request body:**
-```json
-{
-  "request_id": "9f2d...",
-  "payload": {
-    "request_id": "9f2d...",
-    "action_id": "continue",
-    "raw": { "field_id": "value" }
-  }
-}
-```
-
-The `payload.raw` field is forwarded to the waiting render call without any server-side reshaping. BASIL is responsible for interpreting groups, captures, and result structure.
-
-**Response** `200`
-```json
-{ "ok": true }
-```
-
-**Errors:**
-
-| Status | Condition |
+| Limit | Default |
 |---|---|
-| `400` | Missing `request_id` or `payload` |
-| `403` | Caller lacks `glimpse.action` scope |
-| `404` | Unknown `request_id` (no pending render) |
-| `409` | Render already resolved (cancel/timeout/duplicate submission) |
+| Max request body | 256 KB |
+| Max messages per batch | 100 |
+| Max retained messages per session | 2000 |
 
 ---
 
-### `POST /api/glimpse/v1/cancel`
+### WebSocket event: `agent.a2ui.snapshot`
 
-Client callback that resolves a pending render as cancelled. Use when the user dismisses the prompt, navigates away, or otherwise abandons the surface — whatever shape that surface takes.
-
-**Scope:** `glimpse.action`
-
-**Request body:**
-```json
-{ "request_id": "9f2d..." }
-```
-
-**Response** `200`
-```json
-{ "ok": true }
-```
-
-**Errors:**
-
-| Status | Condition |
-|---|---|
-| `400` | Missing `request_id` |
-| `403` | Caller lacks `glimpse.action` scope |
-| `404` | Unknown `request_id` |
-| `409` | Render already resolved |
-
----
-
-### WebSocket event: `glimpse.render`
-
-Pushed over the existing `GET /v1/sessions/{id}/stream` WebSocket when a render is registered for that session. This is a delivery signal — *"a client for this session should present this Glimpse surface somehow"* — not a UI command tied to any particular shell. The client decides how to render it.
-
-To run the BASIL HTML directly, the client decodes `html` (base64), displays it inside whatever container it prefers, installs a `window.glimpse.send` bridge, and POSTs the resulting payload to `/api/glimpse/v1/action`. Clients that present the prompt differently are free to do so; the only contract is that they eventually call `/action` or `/cancel`.
+Sent immediately after WebSocket connect when the session has retained A2UI state. The client should reset its A2UI surface to the snapshot's `messages`, then continue to apply each subsequent `agent.a2ui` batch in `seq` order.
 
 ```json
 {
-  "type": "glimpse.render",
+  "type": "agent.a2ui.snapshot",
   "session_id": "s_000001",
-  "timestamp": "2026-05-01T01:21:31.234Z",
+  "timestamp": "2026-05-01T12:00:00Z",
   "data": {
-    "request_id": "9f2d...",
-    "flow_id": "2d6b...",
-    "html": "<base64-encoded full HTML document>",
-    "timeout_seconds": 300,
-    "hints": { "preferred_mode": "panel" }
+    "version": "v0.9",
+    "seq": 12,
+    "messages": [
+      {
+        "version": "v0.9",
+        "createSurface": {
+          "surfaceId": "main",
+          "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
+          "sendDataModel": true
+        }
+      }
+    ]
   }
 }
 ```
 
-`hints` is whatever BASIL provided in `request.hints`, forwarded verbatim. It is advisory only — clients may ignore it. Zoea does not interpret `surface` or any other BASIL-defined fields, so they do not appear in this event.
+### WebSocket event: `agent.a2ui`
 
-### WebSocket event: `glimpse.close`
-
-Pushed when a render reaches a terminal state. This is a lifecycle event, not a layout instruction — clients may respond by closing a modal, clearing a panel, replacing content with a receipt, or doing nothing.
+Sent for each live batch appended to the session.
 
 ```json
 {
-  "type": "glimpse.close",
+  "type": "agent.a2ui",
   "session_id": "s_000001",
-  "timestamp": "2026-05-01T01:21:42.118Z",
+  "timestamp": "2026-05-01T12:00:02Z",
   "data": {
-    "request_id": "9f2d...",
-    "reason": "completed",
-    "status": "action",
-    "action_id": "continue"
+    "version": "v0.9",
+    "seq": 13,
+    "messages": [
+      {
+        "version": "v0.9",
+        "updateComponents": {
+          "surfaceId": "main",
+          "components": []
+        }
+      }
+    ]
   }
 }
 ```
 
-| Field | Description |
-|---|---|
-| `request_id` | The render this close is for |
-| `reason` | One of `completed`, `cancelled`, `timed_out`, `error` |
-| `status` | Mirrors the terminal envelope returned to BASIL: `action`, `cancelled`, `timed_out`, `error` |
-| `action_id` | When `status=action`, the action_id the user submitted (advisory; useful for receipt UIs) |
+### WebSocket event: `agent.a2ui.error`
 
-`status` and `action_id` are advisory. Clients that already track their own `/action` or `/cancel` response do not need them.
+Sent in response to a malformed inbound `a2ui.action` frame (see below).
+
+```json
+{
+  "type": "agent.a2ui.error",
+  "session_id": "s_000001",
+  "timestamp": "2026-05-01T12:00:03Z",
+  "data": {
+    "error": "a2ui.action: message.version must be v0.9"
+  }
+}
+```
+
+### Client → server message: `a2ui.action`
+
+Sent by the client to forward a user-initiated A2UI action to the runtime. The server validates protocol shape, then forwards through a process-layer seam. If the runtime does not yet implement A2UI input, an `agent.a2ui.error` event is broadcast.
+
+```json
+{
+  "type": "a2ui.action",
+  "data": {
+    "message": {
+      "version": "v0.9",
+      "action": {
+        "name": "submit",
+        "surfaceId": "main",
+        "sourceComponentId": "submit_btn",
+        "timestamp": "2026-05-01T12:00:05Z",
+        "context": {}
+      }
+    },
+    "client_data_model": {
+      "version": "v0.9",
+      "surfaces": { "main": {} }
+    },
+    "client_capabilities": {
+      "v0.9": {
+        "supportedCatalogIds": [
+          "https://a2ui.org/specification/v0_9/basic_catalog.json"
+        ]
+      }
+    }
+  }
+}
+```
 
 ---
 

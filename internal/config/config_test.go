@@ -31,3 +31,13 @@ func TestLoadFromEnvListenAddrTakesPrecedence(t *testing.T) {
 		t.Fatalf("ListenAddr = %q, want %q", cfg.ListenAddr, "127.0.0.1:9191")
 	}
 }
+
+func TestLoadFromEnvDefaultWorkingDir(t *testing.T) {
+	t.Setenv("DEFAULT_WORKING_DIR", " /tmp/project ")
+
+	cfg := LoadFromEnv()
+	if cfg.DefaultWorkingDir != "/tmp/project" {
+		t.Fatalf("DefaultWorkingDir = %q, want %q", cfg.DefaultWorkingDir, "/tmp/project")
+	}
+}
+

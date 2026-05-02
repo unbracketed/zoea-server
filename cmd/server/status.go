@@ -121,6 +121,9 @@ func runStatus() {
 	}
 	fmt.Printf("  Default args   : %v\n", cfg.PiArgs)
 	fmt.Printf("  Sessions dir   : %s\n", cfg.SessionsBaseDir)
+	if cfg.DefaultWorkingDir != "" {
+		fmt.Printf("  Working dir    : %s\n", cfg.DefaultWorkingDir)
+	}
 
 	fmt.Println()
 	if ok {

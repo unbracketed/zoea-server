@@ -90,7 +90,8 @@ All config is via environment variables. Defaults work for local dev.
 | `ZOEA_LISTEN_PORT` | Listen port shorthand | empty |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
 | `PI_DEFAULT_ARGS` | Default args for pi subprocess | `--mode rpc --no-session` |
-| `SESSIONS_BASE_DIR` | Working directory for sessions | `./.zoea-sessions` |
+| `SESSIONS_BASE_DIR` | Base directory for Pi session state/history | `./.zoea-sessions` |
+| `DEFAULT_WORKING_DIR` | Default working directory for all Pi subprocesses | empty |
 | `AUTH_API_KEYS` | API keys for auth (enables auth) | empty |
 | `ZOEA_BEHIND_PROXY` | Treat all connections as remote | empty |
 | `STORE_DRIVER` | Storage backend | `sqlite` |

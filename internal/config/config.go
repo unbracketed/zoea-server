@@ -8,23 +8,25 @@ import (
 )
 
 type Config struct {
-	ListenAddr      string
-	PiBinPath       string
-	PiArgs          []string
-	SessionsBaseDir string
-	Auth            auth.AuthConfig
-	StoreDriver     string
-	StoreDSN        string
+	ListenAddr        string
+	PiBinPath         string
+	PiArgs            []string
+	SessionsBaseDir   string
+	DefaultWorkingDir string
+	Auth              auth.AuthConfig
+	StoreDriver       string
+	StoreDSN          string
 }
 
 func LoadFromEnv() Config {
 	return Config{
-		ListenAddr:      listenAddrFromEnv(),
-		PiBinPath:       envOrDefault("PI_BIN_PATH", "pi"),
-		PiArgs:          splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc --no-session")),
-		SessionsBaseDir: envOrDefault("SESSIONS_BASE_DIR", "./.zoea-sessions"),
-		StoreDriver:     envOrDefault("STORE_DRIVER", "sqlite"),
-		StoreDSN:        envOrDefault("STORE_DSN", "./.zoea.db"),
+		ListenAddr:        listenAddrFromEnv(),
+		PiBinPath:         envOrDefault("PI_BIN_PATH", "pi"),
+		PiArgs:            splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc --no-session")),
+		SessionsBaseDir:   envOrDefault("SESSIONS_BASE_DIR", "./.zoea-sessions"),
+		DefaultWorkingDir: strings.TrimSpace(os.Getenv("DEFAULT_WORKING_DIR")),
+		StoreDriver:       envOrDefault("STORE_DRIVER", "sqlite"),
+		StoreDSN:          envOrDefault("STORE_DSN", "./.zoea.db"),
 		Auth: auth.AuthConfig{
 			APIKeys:     auth.ParseAPIKeys(os.Getenv("AUTH_API_KEYS")),
 			JWKSUrl:     os.Getenv("AUTH_JWKS_URL"),

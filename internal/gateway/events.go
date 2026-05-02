@@ -181,27 +181,21 @@ type Unknown struct {
 	Raw       json.RawMessage `json:"raw"`
 }
 
-// GlimpseRender signals that a BASIL Glimpse prompt is ready for the session.
-// The client decides how to present it — modal, side panel, separate surface,
-// or anything else. Zoea does not inspect the surface or the HTML; both are
-// forwarded as opaque payloads. Hints are forwarded verbatim from BASIL and
-// are advisory only — the client may ignore them.
-type GlimpseRender struct {
-	RequestID      string          `json:"request_id"`
-	FlowID         string          `json:"flow_id,omitempty"`
-	HTML           string          `json:"html"`
-	TimeoutSeconds int             `json:"timeout_seconds,omitempty"`
-	Hints          json.RawMessage `json:"hints,omitempty"`
+// A2UIBatch carries one A2UI v0.9 message batch broadcast to subscribers
+// when the agent (or the temporary injection endpoint) appends to the
+// session's retained state. The server treats Messages as opaque JSON.
+type A2UIBatch struct {
+	Version  string          `json:"version"`
+	Seq      int64           `json:"seq"`
+	Messages json.RawMessage `json:"messages"`
 }
 
-// GlimpseClose marks a pending render as no longer pending. Clients may use
-// it to clean up whatever surface they chose (close a modal, clear a panel,
-// stamp a receipt, etc.). status / action_id are advisory metadata for
-// clients that want to write a receipt without waiting on their own /action
-// or /cancel response.
-type GlimpseClose struct {
-	RequestID string `json:"request_id"`
-	Reason    string `json:"reason,omitempty"`
-	Status    string `json:"status,omitempty"`
-	ActionID  string `json:"action_id,omitempty"`
+// A2UISnapshot replays the session's accumulated A2UI history to a
+// late-subscribing client so it can rebuild the current surface. Sent at
+// most once per WebSocket connect, immediately after subscribe, and only
+// when retained state exists.
+type A2UISnapshot struct {
+	Version  string          `json:"version"`
+	Seq      int64           `json:"seq"`
+	Messages json.RawMessage `json:"messages"`
 }
