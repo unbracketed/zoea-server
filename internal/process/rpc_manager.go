@@ -24,14 +24,21 @@ type RPCProcessManager struct {
 	baseArgs          []string
 	sessionsBaseDir   string
 	defaultWorkingDir string
+	// publicURL is the URL clients (and BASIL subprocesses spawned
+	// inside Pi) should use to reach this Zoea server. Injected into
+	// each Pi process's env as BASIL_ZOEA_URL so basil-a2ui-flow
+	// invocations from Pi tool calls can post A2UI batches back here
+	// without per-project config.
+	publicURL string
 }
 
-func NewRPCProcessManager(binPath string, baseArgs []string, sessionsBaseDir string, defaultWorkingDir string) *RPCProcessManager {
+func NewRPCProcessManager(binPath string, baseArgs []string, sessionsBaseDir string, defaultWorkingDir string, publicURL string) *RPCProcessManager {
 	return &RPCProcessManager{
 		binPath:           binPath,
 		baseArgs:          append([]string{}, baseArgs...),
 		sessionsBaseDir:   sessionsBaseDir,
 		defaultWorkingDir: strings.TrimSpace(defaultWorkingDir),
+		publicURL:         strings.TrimSpace(publicURL),
 	}
 }
 
@@ -67,8 +74,7 @@ func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHa
 
 	cmd := exec.Command(m.binPath, args...)
 	cmd.Dir = workingDir
-	cmd.Env = os.Environ()
-	_ = opts // session/user metadata is tracked via the agent handle, not env
+	cmd.Env = m.buildPiEnv(opts)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -100,6 +106,49 @@ func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHa
 	go h.waitLoop()
 
 	return h, nil
+}
+
+// buildPiEnv composes the env passed to the Pi subprocess and to any
+// capability subprocesses Pi later spawns (basil-a2ui-flow, etc.).
+//
+// We inject A2UI wiring so a fresh BASIL install in the Pi process's
+// working dir doesn't need a hand-edited ``.basil/config.json`` to
+// route browser-side forms back through this Zoea server. The agent
+// can call ``basil_agent_forms_prompt`` and the form just appears in
+// the user's browser tab — that's the whole closed-loop experience
+// from the user's point of view.
+//
+// Existing values in the parent env win, so an operator who sets
+// BASIL_A2UI_TRANSPORT=file (or similar) for a specific Pi instance
+// can still do so without us clobbering it.
+func (m *RPCProcessManager) buildPiEnv(opts StartOptions) []string {
+	parent := os.Environ()
+	have := func(prefix string) bool {
+		for _, kv := range parent {
+			if strings.HasPrefix(kv, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	env := append([]string(nil), parent...)
+
+	// Default the BASIL transport to ``zoea`` for any Pi process this
+	// server spawns; that's the only sensible value when the agent's
+	// browser is the rendering surface.
+	if !have("BASIL_A2UI_TRANSPORT=") {
+		env = append(env, "BASIL_A2UI_TRANSPORT=zoea")
+	}
+	if m.publicURL != "" && !have("BASIL_ZOEA_URL=") {
+		env = append(env, "BASIL_ZOEA_URL="+m.publicURL)
+	}
+	// Session id always tracks the active Pi process — even if the
+	// caller pinned other vars, this one must match the running session.
+	if strings.TrimSpace(opts.SessionID) != "" {
+		env = append(env, "BASIL_ZOEA_SESSION_ID="+opts.SessionID)
+	}
+	return env
 }
 
 func withArgValue(args []string, key, value string) []string {

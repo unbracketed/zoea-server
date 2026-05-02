@@ -167,6 +167,60 @@ func TestA2UIInjectRequiresWriteScope(t *testing.T) {
 	}
 }
 
+func TestA2UIInjectCarriesMessageID(t *testing.T) {
+	h, sm, _ := newTestHandler(t)
+	sid := createTestSession(t, sm)
+	routes := h.Routes()
+
+	s, err := sm.Get(sid)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	events, unsub := s.Subscribe(testCtx(t))
+	defer unsub()
+
+	body, _ := json.Marshal(map[string]any{
+		"message_id": "asst_abc123",
+		"messages": []map[string]any{
+			{
+				"version": "v0.9",
+				"createSurface": map[string]any{
+					"surfaceId":     "main",
+					"catalogId":     "https://a2ui.org/specification/v0_9/basic_catalog.json",
+					"sendDataModel": true,
+				},
+			},
+		},
+	})
+
+	rec := postJSON(t, routes, "/v1/sessions/"+sid+"/a2ui/messages", body)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				t.Fatal("event channel closed before agent.a2ui")
+			}
+			if ev.Type != "agent.a2ui" {
+				continue
+			}
+			b, _ := json.Marshal(ev.Data)
+			var data map[string]any
+			_ = json.Unmarshal(b, &data)
+			if data["message_id"] != "asst_abc123" {
+				t.Fatalf("message_id: got %v want asst_abc123 (%v)", data["message_id"], data)
+			}
+			return
+		case <-deadline:
+			t.Fatal("did not see agent.a2ui event")
+		}
+	}
+}
+
 func TestA2UIInjectAssignsMonotonicSeqAcrossBatches(t *testing.T) {
 	h, sm, _ := newTestHandler(t)
 	sid := createTestSession(t, sm)

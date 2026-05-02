@@ -68,12 +68,23 @@ var (
 
 // Snapshot is the broker's view of a session's retained A2UI state at a
 // point in time. The returned Messages slice is a copy — callers may
-// retain or marshal it freely.
+// retain or marshal it freely. Groups preserves the per-batch
+// (messageID, messages) grouping so a reconnecting client can re-bucket
+// surfaces by owning assistant message.
 type Snapshot struct {
 	Version   string
 	Seq       int64
 	Messages  []json.RawMessage
+	Groups    []SnapshotGroup
 	UpdatedAt time.Time
+}
+
+// SnapshotGroup is the per-batch unit captured in retained state — the
+// messages appended together plus the assistant message id they belong
+// to (empty when the batch was injected without correlation).
+type SnapshotGroup struct {
+	MessageID string
+	Messages  []json.RawMessage
 }
 
 // AppendResult reports the per-batch outcome of Append.
@@ -84,11 +95,14 @@ type AppendResult struct {
 
 // session is the per-session retained state. Messages are stored in
 // arrival order; Seq is the monotonic counter the broker hands back to
-// callers and includes in WS frames.
+// callers and includes in WS frames. Groups records, for each appended
+// batch, the (messageID, messages) pair so a reconnecting client can
+// re-attach surfaces to the assistant message that emitted them.
 type session struct {
 	mu        sync.Mutex
 	lastSeq   int64
 	messages  []json.RawMessage
+	groups    []SnapshotGroup
 	updatedAt time.Time
 }
 
@@ -133,8 +147,11 @@ func (s *State) Validate(messages []json.RawMessage) error {
 
 // Append validates, then atomically appends the batch to the session's
 // history and assigns the next seq. Returns the assigned seq plus the
-// message count appended.
-func (s *State) Append(sessionID string, messages []json.RawMessage) (AppendResult, error) {
+// message count appended. messageID, when non-empty, ties this batch to
+// the assistant chat message that produced it; the broker stores it so
+// reconnecting clients can re-bucket surfaces inline in the chat
+// timeline.
+func (s *State) Append(sessionID, messageID string, messages []json.RawMessage) (AppendResult, error) {
 	if err := s.Validate(messages); err != nil {
 		return AppendResult{}, err
 	}
@@ -151,10 +168,16 @@ func (s *State) Append(sessionID string, messages []json.RawMessage) (AppendResu
 	sess.lastSeq++
 	seq := sess.lastSeq
 	// Defensive copy so the caller can reuse / mutate their slice.
+	groupMessages := make([]json.RawMessage, 0, len(messages))
 	for _, m := range messages {
 		clone := append(json.RawMessage(nil), m...)
 		sess.messages = append(sess.messages, clone)
+		groupMessages = append(groupMessages, clone)
 	}
+	sess.groups = append(sess.groups, SnapshotGroup{
+		MessageID: messageID,
+		Messages:  groupMessages,
+	})
 	sess.updatedAt = time.Now().UTC()
 
 	return AppendResult{Seq: seq, MessageCount: len(messages)}, nil
@@ -180,10 +203,21 @@ func (s *State) Snapshot(sessionID string) (Snapshot, bool) {
 		Version:   ProtocolVersion,
 		Seq:       sess.lastSeq,
 		Messages:  make([]json.RawMessage, len(sess.messages)),
+		Groups:    make([]SnapshotGroup, 0, len(sess.groups)),
 		UpdatedAt: sess.updatedAt,
 	}
 	for i, m := range sess.messages {
 		out.Messages[i] = append(json.RawMessage(nil), m...)
+	}
+	for _, g := range sess.groups {
+		clone := SnapshotGroup{
+			MessageID: g.MessageID,
+			Messages:  make([]json.RawMessage, len(g.Messages)),
+		}
+		for i, m := range g.Messages {
+			clone.Messages[i] = append(json.RawMessage(nil), m...)
+		}
+		out.Groups = append(out.Groups, clone)
 	}
 	return out, true
 }

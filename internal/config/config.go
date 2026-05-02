@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	ListenAddr        string
+	PublicURL         string
 	PiBinPath         string
 	PiArgs            []string
 	SessionsBaseDir   string
@@ -21,6 +22,7 @@ type Config struct {
 func LoadFromEnv() Config {
 	return Config{
 		ListenAddr:        listenAddrFromEnv(),
+		PublicURL:         strings.TrimSpace(os.Getenv("ZOEA_PUBLIC_URL")),
 		PiBinPath:         envOrDefault("PI_BIN_PATH", "pi"),
 		PiArgs:            splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc --no-session")),
 		SessionsBaseDir:   envOrDefault("SESSIONS_BASE_DIR", "./.zoea-sessions"),

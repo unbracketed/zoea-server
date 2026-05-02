@@ -184,18 +184,54 @@ type Unknown struct {
 // A2UIBatch carries one A2UI v0.9 message batch broadcast to subscribers
 // when the agent (or the temporary injection endpoint) appends to the
 // session's retained state. The server treats Messages as opaque JSON.
+//
+// MessageID, when set, ties this batch to a specific assistant chat
+// message. Clients use it to render the surface inline inside that
+// message's bubble instead of in a side panel — matching the A2UI guide
+// where A2UI messages are emitted alongside the agent's text reply.
 type A2UIBatch struct {
-	Version  string          `json:"version"`
-	Seq      int64           `json:"seq"`
-	Messages json.RawMessage `json:"messages"`
+	Version   string          `json:"version"`
+	Seq       int64           `json:"seq"`
+	MessageID string          `json:"message_id,omitempty"`
+	Messages  json.RawMessage `json:"messages"`
 }
 
 // A2UISnapshot replays the session's accumulated A2UI history to a
 // late-subscribing client so it can rebuild the current surface. Sent at
 // most once per WebSocket connect, immediately after subscribe, and only
 // when retained state exists.
+//
+// Groups carries one entry per appended batch (in arrival order) so the
+// client can re-bucket surfaces by their owning assistant message on
+// reconnect. Messages remains the flat list (preserved for legacy clients
+// that don't grouping support yet).
 type A2UISnapshot struct {
-	Version  string          `json:"version"`
-	Seq      int64           `json:"seq"`
-	Messages json.RawMessage `json:"messages"`
+	Version  string                `json:"version"`
+	Seq      int64                 `json:"seq"`
+	Messages json.RawMessage       `json:"messages"`
+	Groups   []A2UISnapshotGroup   `json:"groups,omitempty"`
+}
+
+// A2UISnapshotGroup pairs a contiguous run of replayed messages with the
+// assistant message id they were originally appended for (empty when the
+// batch was injected with no correlation).
+type A2UISnapshotGroup struct {
+	MessageID string            `json:"message_id,omitempty"`
+	Messages  []json.RawMessage `json:"messages"`
+}
+
+// A2UIAction relays an inbound a2ui.action frame to every session
+// subscriber, including server-side agents (e.g. BASIL's flow runtime
+// when subscribed via the session WebSocket) that need to consume the
+// user's response without going through the Pi RPC pipe. Forwarding to
+// Pi via SendA2UIAction continues independently — this broadcast is the
+// "anyone watching the session" channel; Pi RPC is the "the agent that
+// owns this session" channel.
+//
+// Message and the metadata fields stay opaque JSON so the broker
+// remains catalog-agnostic.
+type A2UIAction struct {
+	Message            json.RawMessage `json:"message"`
+	ClientDataModel    json.RawMessage `json:"client_data_model,omitempty"`
+	ClientCapabilities json.RawMessage `json:"client_capabilities,omitempty"`
 }

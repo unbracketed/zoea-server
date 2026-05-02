@@ -317,7 +317,8 @@ func (h *Handler) handleA2UIInjectMessages(w http.ResponseWriter, r *http.Reques
 	defer r.Body.Close()
 
 	var req struct {
-		Messages []json.RawMessage `json:"messages"`
+		Messages  []json.RawMessage `json:"messages"`
+		MessageID string            `json:"message_id"`
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -333,7 +334,7 @@ func (h *Handler) handleA2UIInjectMessages(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	result, err := h.a2ui.Append(sessionID, req.Messages)
+	result, err := h.a2ui.Append(sessionID, req.MessageID, req.Messages)
 	if err != nil {
 		writeJSON(w, h.a2uiErrorStatus(err), map[string]any{"error": err.Error()})
 		return
@@ -348,9 +349,10 @@ func (h *Handler) handleA2UIInjectMessages(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.Broadcast(gateway.NewEvent("agent.a2ui", gateway.A2UIBatch{
-		Version:  a2ui.ProtocolVersion,
-		Seq:      result.Seq,
-		Messages: messagesJSON,
+		Version:   a2ui.ProtocolVersion,
+		Seq:       result.Seq,
+		MessageID: req.MessageID,
+		Messages:  messagesJSON,
 	}))
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
@@ -397,10 +399,18 @@ func (h *Handler) handleSessionStream(w http.ResponseWriter, r *http.Request, se
 	if snap, ok := h.a2ui.Snapshot(sessionID); ok {
 		messagesJSON, err := json.Marshal(snap.Messages)
 		if err == nil {
+			groups := make([]gateway.A2UISnapshotGroup, 0, len(snap.Groups))
+			for _, g := range snap.Groups {
+				groups = append(groups, gateway.A2UISnapshotGroup{
+					MessageID: g.MessageID,
+					Messages:  g.Messages,
+				})
+			}
 			replay := gateway.NewEvent("agent.a2ui.snapshot", gateway.A2UISnapshot{
 				Version:  snap.Version,
 				Seq:      snap.Seq,
 				Messages: messagesJSON,
+				Groups:   groups,
 			})
 			replay.SessionID = sessionID
 			if err := conn.WriteJSON(replay); err != nil {
@@ -424,6 +434,8 @@ func (h *Handler) handleSessionStream(w http.ResponseWriter, r *http.Request, se
 				h.handleWSUIResponse(ctx, s, msg)
 			case "a2ui.action":
 				h.handleWSA2UIAction(ctx, conn, s, msg)
+			case "a2ui.submit":
+				h.handleWSA2UISubmit(ctx, s, msg)
 			}
 		}
 	}()
@@ -484,8 +496,27 @@ func (h *Handler) handleWSA2UIAction(ctx context.Context, _ *websocket.Conn, s *
 		}
 	}
 
+	// Broadcast the action to every session subscriber so server-side
+	// agents (e.g. BASIL's a2ui flow runtime when it subscribes via the
+	// session WS to close the loop without depending on Pi RPC) can
+	// consume it. We broadcast before forwarding to Pi so a Pi-side
+	// failure doesn't suppress the relay; subscribers expecting either
+	// side get the event.
+	s.Broadcast(gateway.NewEvent("agent.a2ui.action", gateway.A2UIAction{
+		Message:            messageRaw,
+		ClientDataModel:    req.ClientDataModel,
+		ClientCapabilities: req.ClientCapabilities,
+	}))
+
 	if err := s.SendA2UIAction(ctx, req); err != nil {
-		s.Broadcast(a2uiActionError(err.Error()))
+		// ErrA2UIUnsupported just means the Pi runtime doesn't
+		// implement an a2ui_action handler yet — that's expected
+		// while BASIL drives flows from a sibling subprocess and
+		// receives the action over the WS broadcast above. Don't
+		// surface it as a user-visible error in that case.
+		if !errors.Is(err, process.ErrA2UIUnsupported) {
+			s.Broadcast(a2uiActionError(err.Error()))
+		}
 	}
 }
 
@@ -522,6 +553,112 @@ func a2uiActionError(reason string) gateway.Event {
 	return gateway.NewEvent("agent.a2ui.error", map[string]any{
 		"error": reason,
 	})
+}
+
+// handleWSA2UISubmit translates an A2UI form submission into a normal
+// user-turn prompt to the agent. This is the canonical chat-channel
+// path described by the A2UI agent-development guide: a surface
+// submission becomes the *next user message* in the conversation, so
+// the agent's existing turn-taking handles it without any side-channel
+// logic.
+//
+// Frame shape:
+//
+//	{
+//	  "type": "a2ui.submit",
+//	  "data": {
+//	    "message_id": "<assistant message that owns the surface>",
+//	    "surface_id": "main",
+//	    "action_name": "submit",
+//	    "values": { ... arbitrary form fields ... },
+//	    "text": "optional human-readable summary"
+//	  }
+//	}
+//
+// The handler also broadcasts agent.a2ui.action for any server-side
+// observer (BASIL flow runtime subscribed to the WS) — kept as a
+// secondary signal so legacy consumers don't break.
+func (h *Handler) handleWSA2UISubmit(ctx context.Context, s *session.Session, msg map[string]any) {
+	dataAny, ok := msg["data"].(map[string]any)
+	if !ok {
+		s.Broadcast(a2uiActionError("a2ui.submit: missing data field"))
+		return
+	}
+
+	surfaceID, _ := dataAny["surface_id"].(string)
+	actionName, _ := dataAny["action_name"].(string)
+	messageID, _ := dataAny["message_id"].(string)
+	humanText, _ := dataAny["text"].(string)
+	values := dataAny["values"]
+
+	if strings.TrimSpace(surfaceID) == "" {
+		s.Broadcast(a2uiActionError("a2ui.submit: surface_id is required"))
+		return
+	}
+	if strings.TrimSpace(actionName) == "" {
+		actionName = "submit"
+	}
+
+	// The prompt sent to the agent embeds the structured submission as
+	// JSON inside a fenced block. Pi's prompt loop treats this as a
+	// plain user message; the agent's system prompt is responsible for
+	// recognising the a2ui-submission envelope and reacting. We keep
+	// optional human text so the user's chat view shows something
+	// readable rather than a wall of JSON.
+	envelope := map[string]any{
+		"a2ui_submission": map[string]any{
+			"version":     "v0.9",
+			"surface_id":  surfaceID,
+			"action_name": actionName,
+			"message_id":  messageID,
+			"values":      values,
+		},
+	}
+	envelopeJSON, err := json.Marshal(envelope)
+	if err != nil {
+		s.Broadcast(a2uiActionError("a2ui.submit: cannot marshal submission"))
+		return
+	}
+
+	var promptBody strings.Builder
+	if strings.TrimSpace(humanText) != "" {
+		promptBody.WriteString(humanText)
+		promptBody.WriteString("\n\n")
+	}
+	promptBody.WriteString("```a2ui-submission\n")
+	promptBody.Write(envelopeJSON)
+	promptBody.WriteString("\n```")
+
+	// Surface submissions almost always arrive while the agent is still
+	// streaming the turn that emitted the form (basil-a2ui-flow keeps
+	// the run open until the user responds). Pi rejects bare prompts
+	// mid-stream, so we always queue the submission as follow_up — that
+	// matches the user's intent ("here is my answer to your question")
+	// and lets the agent pick it up cleanly when the current turn ends.
+	if err := s.Prompt(ctx, process.PromptRequest{
+		Message:           promptBody.String(),
+		StreamingBehavior: "followUp",
+	}); err != nil {
+		s.Broadcast(a2uiActionError("a2ui.submit: " + err.Error()))
+		return
+	}
+
+	// Secondary observer signal — keeps BASIL flow runtimes that read
+	// agent.a2ui.action working without forcing them onto the chat-turn
+	// path immediately.
+	actionMessage, _ := json.Marshal(map[string]any{
+		"version": a2ui.ProtocolVersion,
+		"action": map[string]any{
+			"name":              actionName,
+			"surfaceId":         surfaceID,
+			"sourceComponentId": "",
+			"timestamp":         time.Now().UTC().Format(time.RFC3339Nano),
+			"context":           values,
+		},
+	})
+	s.Broadcast(gateway.NewEvent("agent.a2ui.action", gateway.A2UIAction{
+		Message: actionMessage,
+	}))
 }
 
 func (h *Handler) handleWSUIResponse(ctx context.Context, s *session.Session, msg map[string]any) {

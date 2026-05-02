@@ -42,7 +42,7 @@ func updateComponentsMsg(t *testing.T, surfaceID string) json.RawMessage {
 
 func TestAppendAssignsMonotonicSeq(t *testing.T) {
 	s := NewState(Limits{})
-	r1, err := s.Append("s1", []json.RawMessage{updateComponentsMsg(t, "main")})
+	r1, err := s.Append("s1", "", []json.RawMessage{updateComponentsMsg(t, "main")})
 	if err != nil {
 		t.Fatalf("first append: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestAppendAssignsMonotonicSeq(t *testing.T) {
 		t.Fatalf("first seq: got %d want 1", r1.Seq)
 	}
 
-	r2, err := s.Append("s1", []json.RawMessage{updateComponentsMsg(t, "main"), updateComponentsMsg(t, "main")})
+	r2, err := s.Append("s1", "", []json.RawMessage{updateComponentsMsg(t, "main"), updateComponentsMsg(t, "main")})
 	if err != nil {
 		t.Fatalf("second append: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestAppendAssignsMonotonicSeq(t *testing.T) {
 	}
 
 	// Different sessions get independent counters.
-	r3, err := s.Append("s2", []json.RawMessage{updateComponentsMsg(t, "main")})
+	r3, err := s.Append("s2", "", []json.RawMessage{updateComponentsMsg(t, "main")})
 	if err != nil {
 		t.Fatalf("session2: %v", err)
 	}
@@ -77,10 +77,10 @@ func TestSnapshotReturnsAccumulatedMessages(t *testing.T) {
 		t.Fatal("snapshot should be absent before any append")
 	}
 
-	_, _ = s.Append("s1", []json.RawMessage{
+	_, _ = s.Append("s1", "", []json.RawMessage{
 		createSurfaceMsg(t, "main", "https://a2ui.org/specification/v0_9/basic_catalog.json"),
 	})
-	_, _ = s.Append("s1", []json.RawMessage{updateComponentsMsg(t, "main")})
+	_, _ = s.Append("s1", "", []json.RawMessage{updateComponentsMsg(t, "main")})
 
 	snap, ok := s.Snapshot("s1")
 	if !ok {
@@ -102,7 +102,7 @@ func TestSnapshotReturnsAccumulatedMessages(t *testing.T) {
 
 func TestSnapshotIsCopy(t *testing.T) {
 	s := NewState(Limits{})
-	_, _ = s.Append("s1", []json.RawMessage{updateComponentsMsg(t, "main")})
+	_, _ = s.Append("s1", "", []json.RawMessage{updateComponentsMsg(t, "main")})
 
 	snap, _ := s.Snapshot("s1")
 	// Mutate the returned slice — subsequent snapshot must be unaffected.
@@ -116,7 +116,7 @@ func TestSnapshotIsCopy(t *testing.T) {
 
 func TestResetDropsState(t *testing.T) {
 	s := NewState(Limits{})
-	_, _ = s.Append("s1", []json.RawMessage{updateComponentsMsg(t, "main")})
+	_, _ = s.Append("s1", "", []json.RawMessage{updateComponentsMsg(t, "main")})
 	s.Reset("s1")
 	if _, ok := s.Snapshot("s1"); ok {
 		t.Fatal("expected snapshot to be gone after reset")
@@ -125,7 +125,7 @@ func TestResetDropsState(t *testing.T) {
 	s.Reset("s1")
 
 	// Counter restarts after reset.
-	r, err := s.Append("s1", []json.RawMessage{updateComponentsMsg(t, "main")})
+	r, err := s.Append("s1", "", []json.RawMessage{updateComponentsMsg(t, "main")})
 	if err != nil {
 		t.Fatalf("append after reset: %v", err)
 	}
@@ -210,14 +210,14 @@ func TestValidateAllowsCreateSurfaceWithoutCatalog(t *testing.T) {
 
 func TestAppendEnforcesRetentionLimit(t *testing.T) {
 	s := NewState(Limits{MaxRetainedMessages: 3})
-	if _, err := s.Append("s1", []json.RawMessage{
+	if _, err := s.Append("s1", "", []json.RawMessage{
 		updateComponentsMsg(t, "main"),
 		updateComponentsMsg(t, "main"),
 	}); err != nil {
 		t.Fatalf("append 1: %v", err)
 	}
 	// Pushes total to 4 — over the limit.
-	_, err := s.Append("s1", []json.RawMessage{
+	_, err := s.Append("s1", "", []json.RawMessage{
 		updateComponentsMsg(t, "main"),
 		updateComponentsMsg(t, "main"),
 	})
@@ -238,7 +238,7 @@ func TestAppendEnforcesRetentionLimit(t *testing.T) {
 func TestAppendDefensivelyClonesMessages(t *testing.T) {
 	s := NewState(Limits{})
 	original := updateComponentsMsg(t, "main")
-	_, err := s.Append("s1", []json.RawMessage{original})
+	_, err := s.Append("s1", "", []json.RawMessage{original})
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestConcurrentAppendsAssignDistinctSeqs(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r, err := s.Append("s1", []json.RawMessage{updateComponentsMsg(t, "main")})
+			r, err := s.Append("s1", "", []json.RawMessage{updateComponentsMsg(t, "main")})
 			if err != nil {
 				t.Errorf("append: %v", err)
 				return
