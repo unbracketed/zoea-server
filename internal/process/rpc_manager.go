@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,6 +72,14 @@ func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHa
 	}
 
 	args := withArgValue(append([]string{}, m.baseArgs...), "--session-dir", absSessionDir)
+
+	// If the session-dir already contains a Pi transcript, this is a
+	// resume — tell Pi to continue the most recent JSONL in this dir.
+	// Each Zoea session has its own session-dir, so "most recent" is
+	// unambiguously this session's prior run.
+	if sessionDirHasTranscript(absSessionDir) {
+		args = ensureFlag(args, "--continue")
+	}
 
 	cmd := exec.Command(m.binPath, args...)
 	cmd.Dir = workingDir
@@ -149,6 +158,33 @@ func (m *RPCProcessManager) buildPiEnv(opts StartOptions) []string {
 		env = append(env, "BASIL_ZOEA_SESSION_ID="+opts.SessionID)
 	}
 	return env
+}
+
+// sessionDirHasTranscript reports whether the given Pi session-dir holds
+// at least one .jsonl transcript file. Used to detect resume vs. fresh
+// start without keeping cross-process state.
+func sessionDirHasTranscript(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".jsonl") {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureFlag appends a boolean flag to args if it isn't already present.
+func ensureFlag(args []string, flag string) []string {
+	if slices.Contains(args, flag) {
+		return args
+	}
+	return append(args, flag)
 }
 
 func withArgValue(args []string, key, value string) []string {

@@ -24,7 +24,7 @@ func LoadFromEnv() Config {
 		ListenAddr:        listenAddrFromEnv(),
 		PublicURL:         strings.TrimSpace(os.Getenv("ZOEA_PUBLIC_URL")),
 		PiBinPath:         envOrDefault("PI_BIN_PATH", "pi"),
-		PiArgs:            splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc --no-session")),
+		PiArgs:            splitArgs(envOrDefault("PI_DEFAULT_ARGS", "--mode rpc")),
 		SessionsBaseDir:   envOrDefault("SESSIONS_BASE_DIR", "./.zoea-sessions"),
 		DefaultWorkingDir: strings.TrimSpace(os.Getenv("DEFAULT_WORKING_DIR")),
 		StoreDriver:       envOrDefault("STORE_DRIVER", "sqlite"),
@@ -63,7 +63,7 @@ func envOrDefault(key, fallback string) string {
 func splitArgs(raw string) []string {
 	fields := strings.Fields(strings.TrimSpace(raw))
 	if len(fields) == 0 {
-		return []string{"--mode", "rpc", "--no-session"}
+		return []string{"--mode", "rpc"}
 	}
 	return fields
 }

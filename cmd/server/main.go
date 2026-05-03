@@ -55,7 +55,7 @@ func main() {
 	// Build middleware chain: rate limit → auth → routes
 	var handler http.Handler = h.Routes()
 	handler = auth.Middleware(&cfg.Auth)(handler)
-	handler = auth.RateLimitMiddleware(cfg.Auth.BehindProxy)(handler)
+	handler = auth.RateLimitMiddleware(&cfg.Auth)(handler)
 
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,

@@ -155,6 +155,97 @@ func splitNonEmptyLines(s string) []string {
 	return out
 }
 
+// TestRPCProcessManagerAddsContinueWhenSessionDirHasTranscript covers the
+// resume path: a session-dir already containing a Pi .jsonl must trigger
+// --continue so Pi loads the prior conversation. A fresh dir must not.
+func TestRPCProcessManagerAddsContinueWhenSessionDirHasTranscript(t *testing.T) {
+	root := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	workingDir := filepath.Join(root, "project")
+	if err := os.MkdirAll(workingDir, 0o755); err != nil {
+		t.Fatalf("mkdir working dir: %v", err)
+	}
+	sessionsBase := filepath.Join(root, "sessions")
+	sessionDir := filepath.Join(sessionsBase, "u1", "s1")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir session dir: %v", err)
+	}
+	// Pre-seed a Pi-style transcript.
+	if err := os.WriteFile(filepath.Join(sessionDir, "2026-01-01T00-00-00-000Z_abc.jsonl"), []byte(`{"type":"session","id":"abc"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("seed jsonl: %v", err)
+	}
+
+	argsFile := filepath.Join(root, "args.txt")
+	pm := NewRPCProcessManager("sh", []string{
+		"-c",
+		`args_file="$1"; shift; printf '%s\n' "$@" > "$args_file"`,
+		"sh",
+		argsFile,
+	}, sessionsBase, "", "")
+
+	_, err = pm.Start(context.Background(), StartOptions{SessionID: "s1", UserID: "u1", WorkingDir: workingDir})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	args := splitNonEmptyLines(waitForFileString(t, argsFile))
+	if !containsString(args, "--continue") {
+		t.Fatalf("expected --continue in args when session-dir has transcript, got %v", args)
+	}
+}
+
+func TestRPCProcessManagerOmitsContinueForFreshSessionDir(t *testing.T) {
+	root := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	workingDir := filepath.Join(root, "project")
+	if err := os.MkdirAll(workingDir, 0o755); err != nil {
+		t.Fatalf("mkdir working dir: %v", err)
+	}
+
+	argsFile := filepath.Join(root, "args.txt")
+	pm := NewRPCProcessManager("sh", []string{
+		"-c",
+		`args_file="$1"; shift; printf '%s\n' "$@" > "$args_file"`,
+		"sh",
+		argsFile,
+	}, filepath.Join(root, "sessions"), "", "")
+
+	_, err = pm.Start(context.Background(), StartOptions{SessionID: "s1", UserID: "u1", WorkingDir: workingDir})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	args := splitNonEmptyLines(waitForFileString(t, argsFile))
+	if containsString(args, "--continue") {
+		t.Fatalf("did not expect --continue for fresh session-dir, got %v", args)
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRPCProcessManagerInjectsBasilA2UIEnv(t *testing.T) {
 	root := t.TempDir()
 	cwd, err := os.Getwd()

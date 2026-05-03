@@ -57,11 +57,13 @@ func newTestHandlerWithPM(t *testing.T, pm process.Manager) (*Handler, *session.
 }
 
 type recordingProcessManager struct {
-	lastOpts process.StartOptions
+	lastOpts  process.StartOptions
+	startOpts []process.StartOptions
 }
 
 func (m *recordingProcessManager) Start(_ context.Context, opts process.StartOptions) (process.AgentHandle, error) {
 	m.lastOpts = opts
+	m.startOpts = append(m.startOpts, opts)
 	return recordingHandle{}, nil
 }
 
@@ -234,6 +236,121 @@ func TestMessagesEndpointFormatRaw(t *testing.T) {
 		if len(msg.Content) == 0 {
 			t.Fatalf("msg %d: expected content array, got empty", i)
 		}
+	}
+}
+
+// TestResumeAfterRestartSpawnsHandle covers the bug where the session
+// sidebar showed pre-restart sessions but clicking one returned 404
+// because session.Manager.Get required a live in-memory handle. Resume
+// is the explicit handshake that re-spawns Pi for a stored session.
+func TestResumeAfterRestartSpawnsHandle(t *testing.T) {
+	pm := &recordingProcessManager{}
+
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	st, err := store.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Init(context.Background()); err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	// Lifetime 1: create a session, close the manager (simulate restart).
+	sm1 := session.NewManager(pm, st)
+	if err := sm1.Init(context.Background()); err != nil {
+		t.Fatalf("init sm1: %v", err)
+	}
+	created, err := sm1.Create(context.Background(), "alice", "", "", "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	sid := created.ID
+	if got := len(pm.startOpts); got != 1 {
+		t.Fatalf("expected 1 Start call after Create, got %d", got)
+	}
+
+	// Lifetime 2: fresh manager bound to the same store. The session
+	// record is still present but no live handle exists — exactly the
+	// post-restart state.
+	sm2 := session.NewManager(pm, st)
+	if err := sm2.Init(context.Background()); err != nil {
+		t.Fatalf("init sm2: %v", err)
+	}
+	h := NewHandler(sm2)
+
+	// Pre-resume: Get must report not-found, mirroring what the web UI
+	// previously hit when clicking an old session.
+	if _, err := sm2.Get(sid); err == nil {
+		t.Fatal("expected ErrNotFound before resume")
+	}
+
+	// Resume via HTTP.
+	rec := httptest.NewRecorder()
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/v1/sessions/"+sid+"/resume", nil))
+	h.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resume status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resumeBody struct {
+		SessionID string `json:"session_id"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resumeBody); err != nil {
+		t.Fatalf("decode resume: %v body=%s", err, rec.Body.String())
+	}
+	if resumeBody.SessionID != sid {
+		t.Fatalf("resume session_id: got %q want %q", resumeBody.SessionID, sid)
+	}
+	if resumeBody.Status != "ready" {
+		t.Fatalf("resume status: got %q want %q", resumeBody.Status, "ready")
+	}
+
+	if got := len(pm.startOpts); got != 2 {
+		t.Fatalf("expected Start called once for resume, got %d total Start calls", got)
+	}
+	resumed := pm.startOpts[1]
+	if resumed.SessionID != sid {
+		t.Fatalf("resumed SessionID: got %q want %q", resumed.SessionID, sid)
+	}
+	if resumed.UserID != "alice" {
+		t.Fatalf("resumed UserID: got %q want %q", resumed.UserID, "alice")
+	}
+
+	// Idempotent: a second resume must not spawn another process.
+	rec2 := httptest.NewRecorder()
+	req2 := adminCtx(httptest.NewRequest(http.MethodPost, "/v1/sessions/"+sid+"/resume", nil))
+	h.Routes().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second resume status: %d body=%s", rec2.Code, rec2.Body.String())
+	}
+	if got := len(pm.startOpts); got != 2 {
+		t.Fatalf("expected idempotent resume to skip Start, got %d total Start calls", got)
+	}
+
+	// Post-resume: Get now succeeds and downstream routes work.
+	if _, err := sm2.Get(sid); err != nil {
+		t.Fatalf("Get after resume: %v", err)
+	}
+	stateRec := httptest.NewRecorder()
+	stateReq := adminCtx(httptest.NewRequest(http.MethodGet, "/v1/sessions/"+sid+"/state", nil))
+	h.Routes().ServeHTTP(stateRec, stateReq)
+	if stateRec.Code != http.StatusOK {
+		t.Fatalf("state after resume: %d body=%s", stateRec.Code, stateRec.Body.String())
+	}
+}
+
+// TestResumeUnknownSessionReturns404 ensures we don't accidentally
+// spawn a process for an ID that isn't in the store.
+func TestResumeUnknownSessionReturns404(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	rec := httptest.NewRecorder()
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/v1/sessions/s_nope/resume", nil))
+	h.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status: got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

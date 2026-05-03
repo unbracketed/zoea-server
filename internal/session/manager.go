@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -171,7 +170,7 @@ func (m *Manager) Create(ctx context.Context, userID, projectID, externalID, wor
 	}
 
 	// Start background message persistence listener.
-	go m.persistMessagesOnRunEnd(sid, h)
+	go m.bumpLastActiveOnRunEnd(sid, h)
 	// Watch the same gateway stream for assistant responseIds so the
 	// A2UI broker can fall back to "latest assistant turn" when an
 	// inject arrives without an explicit message_id.
@@ -205,6 +204,65 @@ func (m *Manager) Get(sessionID string) (*Session, error) {
 		ExternalID: rec.ExternalID,
 		CreatedAt:  rec.CreatedAt,
 		LastActive: rec.LastActiveAt,
+		handle:     h,
+	}, nil
+}
+
+// Resume re-attaches a stored session that has no live agent process — the
+// usual case after a server restart. Spawns a fresh Pi process pointed at
+// the original session-dir so the on-disk transcript is reloaded, and
+// re-registers the runtime handle. Idempotent: if a handle already exists
+// for the session, returns it without spawning a second process.
+func (m *Manager) Resume(ctx context.Context, sessionID string) (*Session, error) {
+	rec, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	m.mu.Lock()
+	if h, ok := m.handles[sessionID]; ok {
+		m.mu.Unlock()
+		return &Session{
+			ID:         rec.ID,
+			UserID:     rec.UserID,
+			ProjectID:  rec.ProjectID,
+			ExternalID: rec.ExternalID,
+			CreatedAt:  rec.CreatedAt,
+			LastActive: rec.LastActiveAt,
+			handle:     h,
+		}, nil
+	}
+
+	h, err := m.pm.Start(ctx, process.StartOptions{
+		SessionID: rec.ID,
+		UserID:    rec.UserID,
+		ProjectID: rec.ProjectID,
+	})
+	if err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("resume session: %w", err)
+	}
+	m.handles[sessionID] = h
+	m.mu.Unlock()
+
+	now := time.Now().UTC()
+	_ = m.store.UpdateSessionActivity(ctx, sessionID, now)
+
+	go m.bumpLastActiveOnRunEnd(sessionID, h)
+	if m.a2uiState != nil {
+		go m.trackResponseIDsForA2UI(sessionID, h)
+	}
+
+	return &Session{
+		ID:         rec.ID,
+		UserID:     rec.UserID,
+		ProjectID:  rec.ProjectID,
+		ExternalID: rec.ExternalID,
+		CreatedAt:  rec.CreatedAt,
+		LastActive: now,
 		handle:     h,
 	}, nil
 }
@@ -291,8 +349,12 @@ func (s *Session) Broadcast(event gateway.Event) {
 	s.handle.Broadcast(event)
 }
 
-// persistMessagesOnRunEnd subscribes to events and persists messages on agent.run.end.
-func (m *Manager) persistMessagesOnRunEnd(sessionID string, h process.AgentHandle) {
+// bumpLastActiveOnRunEnd watches for agent.run.end events and updates the
+// session's last_active timestamp in the store. Pi owns the transcript on
+// disk (via --session-dir + --continue on resume), so the server no longer
+// mirrors messages into SQLite — that mirror was destructive on resume,
+// since Pi could legitimately have a shorter transcript than the prior run.
+func (m *Manager) bumpLastActiveOnRunEnd(sessionID string, h process.AgentHandle) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -303,119 +365,6 @@ func (m *Manager) persistMessagesOnRunEnd(sessionID string, h process.AgentHandl
 		if evt.Type != "agent.run.end" {
 			continue
 		}
-
-		go func(e gateway.Event) {
-			m.persistMessages(sessionID, e, h)
-		}(evt)
+		_ = m.store.UpdateSessionActivity(context.Background(), sessionID, time.Now().UTC())
 	}
-}
-
-func (m *Manager) persistMessages(sessionID string, evt gateway.Event, h process.AgentHandle) {
-	now := time.Now().UTC()
-
-	// Update last active in store.
-	_ = m.store.UpdateSessionActivity(context.Background(), sessionID, now)
-
-	// Prefer raw Pi messages so we can persist full-fidelity transcript JSON.
-	rawMsgs, err := h.GetMessagesRaw(context.Background())
-	if err != nil {
-		log.Printf("[persist] session %s: get_messages failed: %v", sessionID, err)
-
-		// Fallback: try parsing raw messages from RunEnd event data.
-		rawMsgs = parseRunEndRawMessages(evt)
-		if len(rawMsgs) == 0 {
-			return
-		}
-	}
-
-	records := make([]store.MessageRecord, 0, len(rawMsgs))
-	for _, raw := range rawMsgs {
-		role, preview, model, usageJSON, ts := flattenRawMessage(raw)
-		if ts.IsZero() {
-			ts = now
-		}
-		records = append(records, store.MessageRecord{
-			SessionID: sessionID,
-			Role:      role,
-			Content:   preview,
-			Model:     model,
-			UsageJSON: usageJSON,
-			RawJSON:   string(raw),
-			Timestamp: ts,
-		})
-	}
-
-	if err := m.store.ReplaceSessionMessages(context.Background(), sessionID, records); err != nil {
-		log.Printf("[persist] session %s: store messages failed: %v", sessionID, err)
-	}
-}
-
-// flattenRawMessage extracts metadata fields from a raw Pi message.
-// Best-effort and non-fatal — missing fields are returned as zero values.
-func flattenRawMessage(raw json.RawMessage) (role string, preview string, model string, usageJSON string, ts time.Time) {
-	var m struct {
-		Role      string          `json:"role"`
-		Content   interface{}     `json:"content"`
-		Model     string          `json:"model"`
-		Usage     json.RawMessage `json:"usage"`
-		Timestamp int64           `json:"timestamp"`
-	}
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return "", "", "", "", time.Time{}
-	}
-	role = m.Role
-	preview = flattenContentInterface(m.Content)
-	model = m.Model
-	if len(m.Usage) > 0 {
-		usageJSON = string(m.Usage)
-	}
-	if m.Timestamp > 0 {
-		// Pi timestamps are milliseconds since epoch.
-		ts = time.UnixMilli(m.Timestamp).UTC()
-	}
-	return role, preview, model, usageJSON, ts
-}
-
-// flattenContentInterface mirrors process.flattenContent but lives here to avoid
-// adding more exported surface to the process package.
-func flattenContentInterface(content interface{}) string {
-	switch v := content.(type) {
-	case string:
-		return v
-	case []interface{}:
-		var parts []string
-		for _, item := range v {
-			obj, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if t, ok := obj["text"].(string); ok {
-				parts = append(parts, t)
-				continue
-			}
-			if t, ok := obj["thinking"].(string); ok {
-				parts = append(parts, t)
-			}
-		}
-		return strings.Join(parts, "")
-	default:
-		return ""
-	}
-}
-
-// parseRunEndRawMessages extracts raw Pi messages from an agent.run.end event.
-func parseRunEndRawMessages(evt gateway.Event) []json.RawMessage {
-	b, err := json.Marshal(evt.Data)
-	if err != nil {
-		return nil
-	}
-	var runEnd gateway.RunEnd
-	if err := json.Unmarshal(b, &runEnd); err != nil || len(runEnd.Messages) == 0 {
-		return nil
-	}
-	var rawMsgs []json.RawMessage
-	if err := json.Unmarshal(runEnd.Messages, &rawMsgs); err != nil {
-		return nil
-	}
-	return rawMsgs
 }

@@ -222,6 +222,29 @@ Abort the agent's current operation.
 
 ---
 
+### `POST /v1/sessions/{id}/resume`
+
+Resume a stored session by spawning a fresh Pi process bound to its original session-dir, so the on-disk transcript is reloaded. Use this after a server restart, or any time a client wants to open a session that has no live Pi process. Idempotent: if a live handle already exists, returns success without spawning a second process.
+
+**Scope:** `sessions.write`
+
+**Response** `200`
+```json
+{
+  "session_id": "s_000001",
+  "status": "ready"
+}
+```
+
+**Errors**
+
+| Status | Reason |
+|--------|--------|
+| `404` | No session with that ID in the store |
+| `500` | Pi process failed to start (missing binary, working dir gone, etc.) |
+
+---
+
 ### `DELETE /v1/sessions/{id}`
 
 Delete a session and terminate its agent process.

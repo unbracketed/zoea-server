@@ -149,12 +149,21 @@ func trimSpace(s string) string {
 }
 
 // RateLimitMiddleware applies per-IP rate limiting to unauthenticated requests.
-// It should be placed before the auth middleware.
-func RateLimitMiddleware(behindProxy bool) func(http.Handler) http.Handler {
+// It should be placed before the auth middleware. When auth is disabled
+// (local-only dev mode), the limiter short-circuits — there's no
+// untrusted traffic to throttle and the cap was tripping legitimate UI
+// activity like clicking through the session sidebar.
+func RateLimitMiddleware(cfg *AuthConfig) func(http.Handler) http.Handler {
 	rl := newRateLimiter()
+	authEnabled := cfg != nil && cfg.IsEnabled()
+	behindProxy := cfg != nil && cfg.BehindProxy
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !authEnabled {
+				next.ServeHTTP(w, r)
+				return
+			}
 			ip := clientIP(r, behindProxy)
 			allowed, retryAfter := rl.allow(ip)
 			if !allowed {

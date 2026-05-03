@@ -195,6 +195,25 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resume is the explicit handshake to spawn a Pi process for a stored
+	// session that has no live handle (typically after a server restart).
+	// Idempotent — re-resuming a live session is a no-op.
+	if action == "resume" && r.Method == http.MethodPost {
+		if !h.requireScope(w, r, "sessions.write") {
+			return
+		}
+		s, err := h.sessions.Resume(r.Context(), sessionID)
+		if err != nil {
+			h.writeSessionErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"session_id": s.ID,
+			"status":     "ready",
+		})
+		return
+	}
+
 	s, err := h.sessions.Get(sessionID)
 	if err != nil {
 		h.writeSessionErr(w, err)

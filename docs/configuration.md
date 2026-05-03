@@ -7,7 +7,7 @@ All configuration is done via environment variables. The defaults are intended t
 | `ZOEA_LISTEN_ADDR` | Listen address | `:8080` |
 | `ZOEA_LISTEN_PORT` | Listen port shorthand | empty |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
-| `PI_DEFAULT_ARGS` | Default args for `pi` subprocess | `--mode rpc --no-session` |
+| `PI_DEFAULT_ARGS` | Default args for `pi` subprocess | `--mode rpc` |
 | `SESSIONS_BASE_DIR` | Base directory for Pi session state/history | `./.zoea-sessions` |
 | `DEFAULT_WORKING_DIR` | Default working directory for all Pi subprocesses | empty |
 | `AUTH_API_KEYS` | API keys for auth (enables auth) | empty |

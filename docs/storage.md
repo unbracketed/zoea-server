@@ -105,21 +105,15 @@ Convention for bridge external IDs: `platform:platform_id` (e.g. `telegram:98765
 
 ## Message persistence
 
-Messages are persisted automatically when an agent run completes:
+Pi owns the transcript on disk. Each Zoea session gets its own session-dir under `SESSIONS_BASE_DIR/<user>/<session-id>/`, which the server passes to Pi as `--session-dir`. Pi writes a JSONL file there as the conversation progresses; on resume, the server re-spawns Pi with `--continue` so Pi loads the most recent JSONL in that dir and threads new turns onto it.
 
-1. A background listener watches for `agent.run.end` events on each session
-2. On run end, the server calls `get_messages` on the Pi subprocess to get the full raw history
-3. For each raw message, the server extracts a flattened preview (`content`), `role`, `model`, `usage_json`, and `timestamp`, and stores the full unflattened JSON in `raw_json`
-4. The entire message history is written to `session_messages`, replacing any previous snapshot
-5. If `get_messages` fails, the server falls back to parsing raw messages from the `agent.run.end` event payload
-
-This means `session_messages` always reflects the latest complete conversation state. Messages are replaced (not appended) because Pi manages its own context window, including compaction.
+The server only updates `last_active_at` on `agent.run.end`; it does not mirror messages into SQLite. The legacy `session_messages` table still exists for backwards compatibility but is no longer written to — earlier versions of the server mirrored Pi's transcript into SQLite, but that mirror was destructive on resume (Pi could legitimately have a shorter transcript than the prior run, which would erase history). With Pi as the single source of truth, that conflict goes away.
 
 ### Schema migrations
 
 When the server starts, it runs additive migrations to bring older databases up to the latest schema. Currently:
 
-- `ALTER TABLE session_messages ADD COLUMN raw_json TEXT` — adds the raw transcript column to pre-existing DBs
+- `ALTER TABLE session_messages ADD COLUMN raw_json TEXT` — adds the raw transcript column to pre-existing DBs (no longer written to, kept for backwards compat)
 
 Migrations are idempotent and tolerate columns that already exist.
 
@@ -156,7 +150,7 @@ See [API Endpoints](endpoints.md) for full request/response details.
 
 ## Limitations
 
-- **No process resurrection** — persisted session metadata survives a restart, but the Pi subprocess does not. Active sessions from a previous server process will exist in the store but won't have a running agent. A future phase may add session reattachment.
+- **Pi processes don't auto-resurrect** — persisted session metadata survives a restart, but the Pi subprocess does not. Clients must call `POST /v1/sessions/{id}/resume` to spawn a new Pi process; the server passes `--continue` so Pi loads the prior JSONL transcript from the session-dir and threads new turns onto it. Idempotent if a live handle already exists. The Zoea web UI does this automatically when the user opens a stored session from the sidebar.
 - **SQLite only** — the `Store` interface is backend-agnostic, but only SQLite is implemented. Postgres support can be added by implementing the same interface.
 - **No data retention policies** — old sessions and messages are kept indefinitely. Manual cleanup or a future TTL feature is needed for long-running deployments.
 - **Single-writer** — SQLite supports one writer at a time. This is fine for single-process deployments but won't scale to multiple server instances. Use Postgres for multi-instance setups (when available).
