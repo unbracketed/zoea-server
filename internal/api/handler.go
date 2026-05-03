@@ -20,8 +20,9 @@ import (
 )
 
 type Handler struct {
-	sessions *session.Manager
-	a2ui     *a2ui.State
+	sessions          *session.Manager
+	a2ui              *a2ui.State
+	defaultWorkingDir string
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -31,15 +32,16 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
-func NewHandler(sm *session.Manager) *Handler {
+func NewHandler(sm *session.Manager, defaultWorkingDir string) *Handler {
 	state := a2ui.NewState(a2ui.Limits{})
 	// Let the session manager record the latest assistant responseId
 	// per session so A2UI injects can auto-tag with it when the caller
 	// (e.g. basil-a2ui-flow) doesn't supply a message_id.
 	sm.AttachA2UIState(state)
 	return &Handler{
-		sessions: sm,
-		a2ui:     state,
+		sessions:          sm,
+		a2ui:              state,
+		defaultWorkingDir: defaultWorkingDir,
 	}
 }
 
@@ -47,9 +49,24 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", h.handleHealth)
 	mux.HandleFunc("/readyz", h.handleReady)
+	mux.HandleFunc("/v1/server-info", h.handleServerInfo)
 	mux.HandleFunc("/v1/sessions", h.handleSessions)
 	mux.HandleFunc("/v1/sessions/", h.handleSessionByID)
 	return mux
+}
+
+// handleServerInfo exposes the server's effective default working-dir so
+// clients (e.g. zoea-web-ui) can scope their session listings to "what
+// this server is currently pointed at." Empty string means no default
+// configured.
+func (h *Handler) handleServerInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"default_working_dir": h.defaultWorkingDir,
+	})
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -114,6 +131,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	q := session.ListQuery{
 		UserID:     r.URL.Query().Get("user_id"),
 		ExternalID: r.URL.Query().Get("external_id"),
+		WorkingDir: r.URL.Query().Get("working_dir"),
 	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -143,6 +161,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		UserID       string `json:"user_id"`
 		ProjectID    string `json:"project_id,omitempty"`
 		ExternalID   string `json:"external_id,omitempty"`
+		WorkingDir   string `json:"working_dir,omitempty"`
 		Status       string `json:"status"`
 		CreatedAt    string `json:"created_at"`
 		LastActiveAt string `json:"last_active_at"`
@@ -155,6 +174,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			UserID:       rec.UserID,
 			ProjectID:    rec.ProjectID,
 			ExternalID:   rec.ExternalID,
+			WorkingDir:   rec.WorkingDir,
 			Status:       rec.Status,
 			CreatedAt:    rec.CreatedAt.Format(time.RFC3339),
 			LastActiveAt: rec.LastActiveAt.Format(time.RFC3339),

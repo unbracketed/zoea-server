@@ -18,6 +18,10 @@ func (m *noopManager) Start(_ context.Context, _ StartOptions) (AgentHandle, err
 	return &noopHandle{subscribers: map[uint64]chan gateway.Event{}}, nil
 }
 
+func (m *noopManager) ResolveWorkingDir(opts StartOptions) (string, error) {
+	return opts.WorkingDir, nil
+}
+
 type noopHandle struct {
 	mu          sync.Mutex
 	messages    []Message

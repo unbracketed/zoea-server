@@ -43,8 +43,53 @@ func NewRPCProcessManager(binPath string, baseArgs []string, sessionsBaseDir str
 	}
 }
 
+// ResolveWorkingDir applies the precedence DEFAULT_WORKING_DIR > opts.WorkingDir
+// and returns an absolute, validated directory path. Exposed via the Manager
+// interface so session.Manager can persist the resolved value before spawning.
+func (m *RPCProcessManager) ResolveWorkingDir(opts StartOptions) (string, error) {
+	candidate := ""
+	if m.defaultWorkingDir != "" {
+		candidate = m.defaultWorkingDir
+	} else if strings.TrimSpace(opts.WorkingDir) != "" {
+		candidate = strings.TrimSpace(opts.WorkingDir)
+	}
+	if candidate == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", fmt.Errorf("resolve working dir: %w", err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", fmt.Errorf("stat working dir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("working dir is not a directory: %s", abs)
+	}
+	return abs, nil
+}
+
+// EncodeCwdSlug turns an absolute working-dir into a filesystem-safe slug
+// using Pi's convention: leading/trailing "--", interior slashes/colons
+// replaced with "-". Exported so callers can compute the slug for
+// listings/UI without re-spawning a Pi process.
+func EncodeCwdSlug(workingDir string) string {
+	if workingDir == "" {
+		return "__default__"
+	}
+	trimmed := strings.TrimLeft(workingDir, "/\\")
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-")
+	return "--" + replacer.Replace(trimmed) + "--"
+}
+
 func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHandle, error) {
-	sessionDir := filepath.Join(m.sessionsBaseDir, opts.UserID, opts.SessionID)
+	workingDir, err := m.ResolveWorkingDir(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	sessionDir := filepath.Join(m.sessionsBaseDir, opts.UserID, EncodeCwdSlug(workingDir), opts.SessionID)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
@@ -53,22 +98,10 @@ func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHa
 		return nil, fmt.Errorf("resolve session dir: %w", err)
 	}
 
-	workingDir := absSessionDir
-	if m.defaultWorkingDir != "" {
-		workingDir = m.defaultWorkingDir
-	} else if strings.TrimSpace(opts.WorkingDir) != "" {
-		workingDir = strings.TrimSpace(opts.WorkingDir)
-	}
-	workingDir, err = filepath.Abs(workingDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve working dir: %w", err)
-	}
-	info, err := os.Stat(workingDir)
-	if err != nil {
-		return nil, fmt.Errorf("stat working dir: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("working dir is not a directory: %s", workingDir)
+	// If neither default nor request supplied a working-dir, fall back
+	// to the (now-encoded) session-dir itself so Pi has a valid cwd.
+	if workingDir == "" {
+		workingDir = absSessionDir
 	}
 
 	args := withArgValue(append([]string{}, m.baseArgs...), "--session-dir", absSessionDir)

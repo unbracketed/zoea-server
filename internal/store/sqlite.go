@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     external_id TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     pi_pid INTEGER,
+    working_dir TEXT,
     created_at TEXT NOT NULL,
     last_active_at TEXT NOT NULL
 );
@@ -107,9 +108,9 @@ func (s *SQLiteStore) Close() error {
 
 func (s *SQLiteStore) CreateSession(ctx context.Context, rec SessionRecord) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO sessions (id, user_id, project_id, external_id, status, pi_pid, created_at, last_active_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, rec.ID, rec.UserID, nullableString(rec.ProjectID), nullableString(rec.ExternalID), defaultString(rec.Status, "active"), nullableInt(rec.PiPID), toTS(rec.CreatedAt), toTS(rec.LastActiveAt))
+		INSERT INTO sessions (id, user_id, project_id, external_id, status, pi_pid, working_dir, created_at, last_active_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, rec.ID, rec.UserID, nullableString(rec.ProjectID), nullableString(rec.ExternalID), defaultString(rec.Status, "active"), nullableInt(rec.PiPID), nullableString(rec.WorkingDir), toTS(rec.CreatedAt), toTS(rec.LastActiveAt))
 	if err != nil {
 		if isUniqueConstraint(err) {
 			return ErrConflict
@@ -121,14 +122,14 @@ func (s *SQLiteStore) CreateSession(ctx context.Context, rec SessionRecord) erro
 
 func (s *SQLiteStore) GetSession(ctx context.Context, id string) (SessionRecord, error) {
 	var rec SessionRecord
-	var projectID, externalID sql.NullString
+	var projectID, externalID, workingDir sql.NullString
 	var piPID sql.NullInt64
 	var createdAt, lastActiveAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, project_id, external_id, status, pi_pid, created_at, last_active_at
+		SELECT id, user_id, project_id, external_id, status, pi_pid, working_dir, created_at, last_active_at
 		FROM sessions
 		WHERE id = ?
-	`, id).Scan(&rec.ID, &rec.UserID, &projectID, &externalID, &rec.Status, &piPID, &createdAt, &lastActiveAt)
+	`, id).Scan(&rec.ID, &rec.UserID, &projectID, &externalID, &rec.Status, &piPID, &workingDir, &createdAt, &lastActiveAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return SessionRecord{}, ErrNotFound
@@ -137,6 +138,7 @@ func (s *SQLiteStore) GetSession(ctx context.Context, id string) (SessionRecord,
 	}
 	rec.ProjectID = nullableStringValue(projectID)
 	rec.ExternalID = nullableStringValue(externalID)
+	rec.WorkingDir = nullableStringValue(workingDir)
 	if piPID.Valid {
 		rec.PiPID = int(piPID.Int64)
 	}
@@ -168,9 +170,13 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, q ListSessionsQuery) ([]
 		clauses = append(clauses, "external_id = ?")
 		args = append(args, strings.TrimSpace(q.ExternalID))
 	}
+	if strings.TrimSpace(q.WorkingDir) != "" {
+		clauses = append(clauses, "working_dir = ?")
+		args = append(args, strings.TrimSpace(q.WorkingDir))
+	}
 
 	query := `
-		SELECT id, user_id, project_id, external_id, status, pi_pid, created_at, last_active_at
+		SELECT id, user_id, project_id, external_id, status, pi_pid, working_dir, created_at, last_active_at
 		FROM sessions
 		WHERE ` + strings.Join(clauses, " AND ") + `
 		ORDER BY created_at DESC
@@ -186,14 +192,15 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, q ListSessionsQuery) ([]
 	out := []SessionRecord{}
 	for rows.Next() {
 		var rec SessionRecord
-		var projectID, externalID sql.NullString
+		var projectID, externalID, workingDir sql.NullString
 		var piPID sql.NullInt64
 		var createdAt, lastActiveAt string
-		if err := rows.Scan(&rec.ID, &rec.UserID, &projectID, &externalID, &rec.Status, &piPID, &createdAt, &lastActiveAt); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.UserID, &projectID, &externalID, &rec.Status, &piPID, &workingDir, &createdAt, &lastActiveAt); err != nil {
 			return nil, err
 		}
 		rec.ProjectID = nullableStringValue(projectID)
 		rec.ExternalID = nullableStringValue(externalID)
+		rec.WorkingDir = nullableStringValue(workingDir)
 		if piPID.Valid {
 			rec.PiPID = int(piPID.Int64)
 		}

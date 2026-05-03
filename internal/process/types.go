@@ -77,4 +77,10 @@ type AgentHandle interface {
 
 type Manager interface {
 	Start(ctx context.Context, opts StartOptions) (AgentHandle, error)
+	// ResolveWorkingDir reports the absolute working-dir the manager
+	// would use for the given options, applying the same precedence
+	// rules as Start. Lets callers (e.g. session.Manager) record the
+	// resolved value alongside session metadata so resume can replay
+	// it deterministically.
+	ResolveWorkingDir(opts StartOptions) (string, error)
 }

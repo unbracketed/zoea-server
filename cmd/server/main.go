@@ -50,7 +50,7 @@ func main() {
 		log.Fatalf("init session manager: %v", err)
 	}
 
-	h := api.NewHandler(sm)
+	h := api.NewHandler(sm, cfg.DefaultWorkingDir)
 
 	// Build middleware chain: rate limit → auth → routes
 	var handler http.Handler = h.Routes()

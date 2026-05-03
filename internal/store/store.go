@@ -18,6 +18,7 @@ type SessionRecord struct {
 	ExternalID   string
 	Status       string
 	PiPID        int
+	WorkingDir   string
 	CreatedAt    time.Time
 	LastActiveAt time.Time
 }
@@ -25,6 +26,7 @@ type SessionRecord struct {
 type ListSessionsQuery struct {
 	UserID     string
 	ExternalID string
+	WorkingDir string
 	Limit      int
 	Offset     int
 }

@@ -55,7 +55,11 @@ func TestRPCProcessManagerUsesWorkingDirAndAbsoluteSessionDir(t *testing.T) {
 	if !filepath.IsAbs(args[1]) {
 		t.Fatalf("session dir should be absolute, got %q", args[1])
 	}
-	wantSessionDir := filepath.Join(root, "sessions", "u1", "s1")
+	absWorkingDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	wantSessionDir := filepath.Join(root, "sessions", "u1", EncodeCwdSlug(absWorkingDir), "s1")
 	gotSessionDir, err := filepath.EvalSymlinks(args[1])
 	if err != nil {
 		t.Fatalf("eval symlinks on got session dir: %v", err)
@@ -173,12 +177,16 @@ func TestRPCProcessManagerAddsContinueWhenSessionDirHasTranscript(t *testing.T) 
 	if err := os.MkdirAll(workingDir, 0o755); err != nil {
 		t.Fatalf("mkdir working dir: %v", err)
 	}
+	absWorkingDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
 	sessionsBase := filepath.Join(root, "sessions")
-	sessionDir := filepath.Join(sessionsBase, "u1", "s1")
+	// Pre-seed at the slug-encoded location Start will compute.
+	sessionDir := filepath.Join(sessionsBase, "u1", EncodeCwdSlug(absWorkingDir), "s1")
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		t.Fatalf("mkdir session dir: %v", err)
 	}
-	// Pre-seed a Pi-style transcript.
 	if err := os.WriteFile(filepath.Join(sessionDir, "2026-01-01T00-00-00-000Z_abc.jsonl"), []byte(`{"type":"session","id":"abc"}`+"\n"), 0o644); err != nil {
 		t.Fatalf("seed jsonl: %v", err)
 	}
@@ -234,6 +242,24 @@ func TestRPCProcessManagerOmitsContinueForFreshSessionDir(t *testing.T) {
 	args := splitNonEmptyLines(waitForFileString(t, argsFile))
 	if containsString(args, "--continue") {
 		t.Fatalf("did not expect --continue for fresh session-dir, got %v", args)
+	}
+}
+
+func TestEncodeCwdSlug(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"/tmp/brown", "--tmp-brown--"},
+		{"/Users/brian/PiClaws", "--Users-brian-PiClaws--"},
+		{"", "__default__"},
+		{"/", "----"},
+	}
+	for _, c := range cases {
+		got := EncodeCwdSlug(c.in)
+		if got != c.want {
+			t.Errorf("EncodeCwdSlug(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 

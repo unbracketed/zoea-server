@@ -24,6 +24,17 @@ Readiness check.
 {"ok": true}
 ```
 
+### `GET /v1/server-info`
+
+Returns the server's configured defaults so clients can scope their behavior to "what this server is currently pointed at." Currently exposes the effective default working-dir; the value is empty when no `DEFAULT_WORKING_DIR` is set.
+
+**Response** `200`
+```json
+{
+  "default_working_dir": "/tmp/brown"
+}
+```
+
 ---
 
 ## Session endpoints
@@ -80,6 +91,7 @@ List sessions with optional filters.
 |---|---|---|
 | `user_id` | string | Filter by user |
 | `external_id` | string | Exact match on external ID |
+| `working_dir` | string | Exact match on the resolved working directory the session was created with. Useful for scoping the listing to the server's current `DEFAULT_WORKING_DIR` (see `GET /v1/server-info`). |
 | `limit` | int | Max results (default 50, max 200) |
 | `offset` | int | Pagination offset (default 0) |
 

@@ -23,6 +23,7 @@ type Session struct {
 	UserID     string    `json:"user_id"`
 	ProjectID  string    `json:"project_id,omitempty"`
 	ExternalID string    `json:"external_id,omitempty"`
+	WorkingDir string    `json:"working_dir,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	LastActive time.Time `json:"last_active"`
 	handle     process.AgentHandle
@@ -31,6 +32,7 @@ type Session struct {
 type ListQuery struct {
 	UserID     string
 	ExternalID string
+	WorkingDir string
 	Limit      int
 	Offset     int
 }
@@ -132,12 +134,22 @@ func (m *Manager) Create(ctx context.Context, userID, projectID, externalID, wor
 	m.counter++
 	sid := fmt.Sprintf("s_%06d", m.counter)
 
-	h, err := m.pm.Start(ctx, process.StartOptions{
+	startOpts := process.StartOptions{
 		SessionID:  sid,
 		UserID:     userID,
 		ProjectID:  projectID,
 		WorkingDir: workingDir,
-	})
+	}
+
+	// Resolve the effective working-dir up front so we can persist it
+	// alongside the session metadata. Resume reads this back to spawn Pi
+	// in the same cwd, and the session-dir slug is derived from it.
+	resolvedWorkingDir, err := m.pm.ResolveWorkingDir(startOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	h, err := m.pm.Start(ctx, startOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +161,7 @@ func (m *Manager) Create(ctx context.Context, userID, projectID, externalID, wor
 		ProjectID:    projectID,
 		ExternalID:   externalID,
 		Status:       "active",
+		WorkingDir:   resolvedWorkingDir,
 		CreatedAt:    now,
 		LastActiveAt: now,
 	}
@@ -164,6 +177,7 @@ func (m *Manager) Create(ctx context.Context, userID, projectID, externalID, wor
 		UserID:     userID,
 		ProjectID:  projectID,
 		ExternalID: externalID,
+		WorkingDir: resolvedWorkingDir,
 		CreatedAt:  now,
 		LastActive: now,
 		handle:     h,
@@ -202,6 +216,7 @@ func (m *Manager) Get(sessionID string) (*Session, error) {
 		UserID:     rec.UserID,
 		ProjectID:  rec.ProjectID,
 		ExternalID: rec.ExternalID,
+		WorkingDir: rec.WorkingDir,
 		CreatedAt:  rec.CreatedAt,
 		LastActive: rec.LastActiveAt,
 		handle:     h,
@@ -230,6 +245,7 @@ func (m *Manager) Resume(ctx context.Context, sessionID string) (*Session, error
 			UserID:     rec.UserID,
 			ProjectID:  rec.ProjectID,
 			ExternalID: rec.ExternalID,
+			WorkingDir: rec.WorkingDir,
 			CreatedAt:  rec.CreatedAt,
 			LastActive: rec.LastActiveAt,
 			handle:     h,
@@ -237,9 +253,10 @@ func (m *Manager) Resume(ctx context.Context, sessionID string) (*Session, error
 	}
 
 	h, err := m.pm.Start(ctx, process.StartOptions{
-		SessionID: rec.ID,
-		UserID:    rec.UserID,
-		ProjectID: rec.ProjectID,
+		SessionID:  rec.ID,
+		UserID:     rec.UserID,
+		ProjectID:  rec.ProjectID,
+		WorkingDir: rec.WorkingDir,
 	})
 	if err != nil {
 		m.mu.Unlock()
@@ -261,6 +278,7 @@ func (m *Manager) Resume(ctx context.Context, sessionID string) (*Session, error
 		UserID:     rec.UserID,
 		ProjectID:  rec.ProjectID,
 		ExternalID: rec.ExternalID,
+		WorkingDir: rec.WorkingDir,
 		CreatedAt:  rec.CreatedAt,
 		LastActive: now,
 		handle:     h,
@@ -271,6 +289,7 @@ func (m *Manager) List(ctx context.Context, q ListQuery) ([]store.SessionRecord,
 	return m.store.ListSessions(ctx, store.ListSessionsQuery{
 		UserID:     q.UserID,
 		ExternalID: q.ExternalID,
+		WorkingDir: q.WorkingDir,
 		Limit:      q.Limit,
 		Offset:     q.Offset,
 	})
