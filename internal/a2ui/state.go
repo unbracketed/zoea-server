@@ -70,13 +70,16 @@ var (
 // point in time. The returned Messages slice is a copy — callers may
 // retain or marshal it freely. Groups preserves the per-batch
 // (messageID, messages) grouping so a reconnecting client can re-bucket
-// surfaces by owning assistant message.
+// surfaces by owning assistant message. Submissions carries any
+// recorded user responses so closed forms render in their post-submit
+// state on reconnect.
 type Snapshot struct {
-	Version   string
-	Seq       int64
-	Messages  []json.RawMessage
-	Groups    []SnapshotGroup
-	UpdatedAt time.Time
+	Version     string
+	Seq         int64
+	Messages    []json.RawMessage
+	Groups      []SnapshotGroup
+	Submissions []SubmissionRecord
+	UpdatedAt   time.Time
 }
 
 // SnapshotGroup is the per-batch unit captured in retained state — the
@@ -98,12 +101,33 @@ type AppendResult struct {
 // callers and includes in WS frames. Groups records, for each appended
 // batch, the (messageID, messages) pair so a reconnecting client can
 // re-attach surfaces to the assistant message that emitted them.
+//
+// LatestResponseID is the most recent assistant responseId observed on
+// the session's gateway stream — used as a fallback when an A2UI inject
+// arrives without an explicit message_id, so surfaces still anchor to a
+// real chat bubble. Submissions records, per surface, the user's
+// recorded action+values so reconnecting clients can render closed
+// forms in their post-submit state.
 type session struct {
-	mu        sync.Mutex
-	lastSeq   int64
-	messages  []json.RawMessage
-	groups    []SnapshotGroup
-	updatedAt time.Time
+	mu               sync.Mutex
+	lastSeq          int64
+	messages         []json.RawMessage
+	groups           []SnapshotGroup
+	latestResponseID string
+	submissions      map[string]SubmissionRecord
+	updatedAt        time.Time
+}
+
+// SubmissionRecord captures one user response to an A2UI surface. The
+// broker treats Values as opaque; clients render them in the closed
+// form card.
+type SubmissionRecord struct {
+	SurfaceID  string
+	MessageID  string
+	ActionName string
+	Status     string // "submitted" | "cancelled"
+	Values     json.RawMessage
+	At         time.Time
 }
 
 // State is the per-server registry of A2UI sessions. Safe for concurrent use.
@@ -200,11 +224,12 @@ func (s *State) Snapshot(sessionID string) (Snapshot, bool) {
 	}
 
 	out := Snapshot{
-		Version:   ProtocolVersion,
-		Seq:       sess.lastSeq,
-		Messages:  make([]json.RawMessage, len(sess.messages)),
-		Groups:    make([]SnapshotGroup, 0, len(sess.groups)),
-		UpdatedAt: sess.updatedAt,
+		Version:     ProtocolVersion,
+		Seq:         sess.lastSeq,
+		Messages:    make([]json.RawMessage, len(sess.messages)),
+		Groups:      make([]SnapshotGroup, 0, len(sess.groups)),
+		Submissions: make([]SubmissionRecord, 0, len(sess.submissions)),
+		UpdatedAt:   sess.updatedAt,
 	}
 	for i, m := range sess.messages {
 		out.Messages[i] = append(json.RawMessage(nil), m...)
@@ -219,6 +244,13 @@ func (s *State) Snapshot(sessionID string) (Snapshot, bool) {
 		}
 		out.Groups = append(out.Groups, clone)
 	}
+	for _, rec := range sess.submissions {
+		clone := rec
+		if len(rec.Values) > 0 {
+			clone.Values = append(json.RawMessage(nil), rec.Values...)
+		}
+		out.Submissions = append(out.Submissions, clone)
+	}
 	return out, true
 }
 
@@ -227,6 +259,63 @@ func (s *State) Reset(sessionID string) {
 	s.mu.Lock()
 	delete(s.sessions, sessionID)
 	s.mu.Unlock()
+}
+
+// RecordLatestResponseID stores the most recent assistant responseId
+// observed for this session. Empty input is ignored. The broker uses
+// this as a fallback message_id when a caller injects an A2UI batch
+// without specifying one, so the surface still anchors to a real chat
+// bubble in the client.
+func (s *State) RecordLatestResponseID(sessionID, responseID string) {
+	if sessionID == "" || responseID == "" {
+		return
+	}
+	sess := s.getOrCreate(sessionID)
+	sess.mu.Lock()
+	sess.latestResponseID = responseID
+	sess.mu.Unlock()
+}
+
+// LatestResponseID returns the most recent assistant responseId
+// recorded for this session, or "" if none is known.
+func (s *State) LatestResponseID(sessionID string) string {
+	s.mu.Lock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.Unlock()
+	if !ok {
+		return ""
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	return sess.latestResponseID
+}
+
+// RecordSubmission saves the user's response to an A2UI surface.
+// Status is "submitted" or "cancelled". Values is opaque JSON. Repeat
+// calls overwrite the prior record for the same surfaceID — the broker
+// keeps only the latest response per surface.
+func (s *State) RecordSubmission(sessionID string, rec SubmissionRecord) {
+	if sessionID == "" || rec.SurfaceID == "" {
+		return
+	}
+	if rec.At.IsZero() {
+		rec.At = time.Now().UTC()
+	}
+	if rec.Status == "" {
+		rec.Status = "submitted"
+	}
+	sess := s.getOrCreate(sessionID)
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.submissions == nil {
+		sess.submissions = map[string]SubmissionRecord{}
+	}
+	clone := rec
+	if len(rec.Values) > 0 {
+		clone.Values = append(json.RawMessage(nil), rec.Values...)
+	}
+	sess.submissions[rec.SurfaceID] = clone
+	sess.updatedAt = time.Now().UTC()
 }
 
 func (s *State) getOrCreate(sessionID string) *session {

@@ -32,9 +32,14 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 func NewHandler(sm *session.Manager) *Handler {
+	state := a2ui.NewState(a2ui.Limits{})
+	// Let the session manager record the latest assistant responseId
+	// per session so A2UI injects can auto-tag with it when the caller
+	// (e.g. basil-a2ui-flow) doesn't supply a message_id.
+	sm.AttachA2UIState(state)
 	return &Handler{
 		sessions: sm,
-		a2ui:     a2ui.NewState(a2ui.Limits{}),
+		a2ui:     state,
 	}
 }
 
@@ -334,7 +339,18 @@ func (h *Handler) handleA2UIInjectMessages(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	result, err := h.a2ui.Append(sessionID, req.MessageID, req.Messages)
+	// If the caller didn't supply a message_id, fall back to the
+	// session's latest assistant responseId. That keeps surfaces
+	// anchored to the chat bubble that "asked" the question, which is
+	// what the inline form-message UI needs. basil-a2ui-flow doesn't
+	// know its owning responseId today, so without this fallback every
+	// surface ends up an orphan.
+	messageID := strings.TrimSpace(req.MessageID)
+	if messageID == "" {
+		messageID = h.a2ui.LatestResponseID(sessionID)
+	}
+
+	result, err := h.a2ui.Append(sessionID, messageID, req.Messages)
 	if err != nil {
 		writeJSON(w, h.a2uiErrorStatus(err), map[string]any{"error": err.Error()})
 		return
@@ -351,7 +367,7 @@ func (h *Handler) handleA2UIInjectMessages(w http.ResponseWriter, r *http.Reques
 	s.Broadcast(gateway.NewEvent("agent.a2ui", gateway.A2UIBatch{
 		Version:   a2ui.ProtocolVersion,
 		Seq:       result.Seq,
-		MessageID: req.MessageID,
+		MessageID: messageID,
 		Messages:  messagesJSON,
 	}))
 
@@ -406,11 +422,23 @@ func (h *Handler) handleSessionStream(w http.ResponseWriter, r *http.Request, se
 					Messages:  g.Messages,
 				})
 			}
+			submissions := make([]gateway.A2UISnapshotSubmission, 0, len(snap.Submissions))
+			for _, sub := range snap.Submissions {
+				submissions = append(submissions, gateway.A2UISnapshotSubmission{
+					SurfaceID:  sub.SurfaceID,
+					MessageID:  sub.MessageID,
+					ActionName: sub.ActionName,
+					Status:     sub.Status,
+					Values:     sub.Values,
+					At:         sub.At.Format(time.RFC3339Nano),
+				})
+			}
 			replay := gateway.NewEvent("agent.a2ui.snapshot", gateway.A2UISnapshot{
-				Version:  snap.Version,
-				Seq:      snap.Seq,
-				Messages: messagesJSON,
-				Groups:   groups,
+				Version:     snap.Version,
+				Seq:         snap.Seq,
+				Messages:    messagesJSON,
+				Groups:      groups,
+				Submissions: submissions,
 			})
 			replay.SessionID = sessionID
 			if err := conn.WriteJSON(replay); err != nil {
@@ -643,6 +671,34 @@ func (h *Handler) handleWSA2UISubmit(ctx context.Context, s *session.Session, ms
 		return
 	}
 
+	// Persist the submission so a reconnecting client can render the
+	// form in its closed state, and broadcast the live event so
+	// already-connected clients flip the inline form bubble
+	// immediately. "cancel"-style action names route to "cancelled";
+	// everything else is "submitted".
+	status := "submitted"
+	if isCancelAction(actionName) {
+		status = "cancelled"
+	}
+	valuesJSON, _ := json.Marshal(values)
+	now := time.Now().UTC()
+	h.a2ui.RecordSubmission(s.ID, a2ui.SubmissionRecord{
+		SurfaceID:  surfaceID,
+		MessageID:  messageID,
+		ActionName: actionName,
+		Status:     status,
+		Values:     valuesJSON,
+		At:         now,
+	})
+	s.Broadcast(gateway.NewEvent("agent.a2ui.submission", gateway.A2UISubmission{
+		SurfaceID:  surfaceID,
+		MessageID:  messageID,
+		ActionName: actionName,
+		Status:     status,
+		Values:     valuesJSON,
+		At:         now.Format(time.RFC3339Nano),
+	}))
+
 	// Secondary observer signal — keeps BASIL flow runtimes that read
 	// agent.a2ui.action working without forcing them onto the chat-turn
 	// path immediately.
@@ -652,13 +708,26 @@ func (h *Handler) handleWSA2UISubmit(ctx context.Context, s *session.Session, ms
 			"name":              actionName,
 			"surfaceId":         surfaceID,
 			"sourceComponentId": "",
-			"timestamp":         time.Now().UTC().Format(time.RFC3339Nano),
+			"timestamp":         now.Format(time.RFC3339Nano),
 			"context":           values,
 		},
 	})
 	s.Broadcast(gateway.NewEvent("agent.a2ui.action", gateway.A2UIAction{
 		Message: actionMessage,
 	}))
+}
+
+// isCancelAction matches the conventional names BASIL flow specs use
+// for cancel-style buttons. Anything else is treated as a "submit".
+// We're intentionally permissive — false positives mean we render a
+// "cancelled" card instead of "submitted", which the user can correct
+// by relaunching the flow; false negatives are visually fine.
+func isCancelAction(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "cancel", "cancelled", "dismiss", "close":
+		return true
+	}
+	return false
 }
 
 func (h *Handler) handleWSUIResponse(ctx context.Context, s *session.Session, msg map[string]any) {

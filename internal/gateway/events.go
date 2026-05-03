@@ -206,10 +206,11 @@ type A2UIBatch struct {
 // reconnect. Messages remains the flat list (preserved for legacy clients
 // that don't grouping support yet).
 type A2UISnapshot struct {
-	Version  string                `json:"version"`
-	Seq      int64                 `json:"seq"`
-	Messages json.RawMessage       `json:"messages"`
-	Groups   []A2UISnapshotGroup   `json:"groups,omitempty"`
+	Version     string                   `json:"version"`
+	Seq         int64                    `json:"seq"`
+	Messages    json.RawMessage          `json:"messages"`
+	Groups      []A2UISnapshotGroup      `json:"groups,omitempty"`
+	Submissions []A2UISnapshotSubmission `json:"submissions,omitempty"`
 }
 
 // A2UISnapshotGroup pairs a contiguous run of replayed messages with the
@@ -234,4 +235,30 @@ type A2UIAction struct {
 	Message            json.RawMessage `json:"message"`
 	ClientDataModel    json.RawMessage `json:"client_data_model,omitempty"`
 	ClientCapabilities json.RawMessage `json:"client_capabilities,omitempty"`
+}
+
+// A2UISubmission is broadcast when the broker records a user response
+// to an A2UI surface (submitted or cancelled). Live clients use it to
+// flip the inline form-message into its closed state immediately;
+// reconnecting clients get the same data via the snapshot's
+// submissions list.
+type A2UISubmission struct {
+	SurfaceID  string          `json:"surface_id"`
+	MessageID  string          `json:"message_id,omitempty"`
+	ActionName string          `json:"action_name,omitempty"`
+	Status     string          `json:"status"`
+	Values     json.RawMessage `json:"values,omitempty"`
+	At         string          `json:"at"`
+}
+
+// A2UISnapshotSubmission is the snapshot replay shape — same fields as
+// A2UISubmission, kept distinct so the JSON tags can evolve
+// independently if needed.
+type A2UISnapshotSubmission struct {
+	SurfaceID  string          `json:"surface_id"`
+	MessageID  string          `json:"message_id,omitempty"`
+	ActionName string          `json:"action_name,omitempty"`
+	Status     string          `json:"status"`
+	Values     json.RawMessage `json:"values,omitempty"`
+	At         string          `json:"at"`
 }
