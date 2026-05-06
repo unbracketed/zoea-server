@@ -111,16 +111,6 @@ func (h *noopHandle) SendUIResponse(_ context.Context, _ UIResponse) error {
 	return nil
 }
 
-// SendA2UIAction on the noop manager records the action by broadcasting a
-// synthetic event so tests can observe it, then returns nil. Production
-// runtimes will instead forward to a real Pi-side handler.
-func (h *noopHandle) SendA2UIAction(_ context.Context, req A2UIActionRequest) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.broadcastLocked(gateway.NewEvent("agent.a2ui.action_received", req))
-	return nil
-}
-
 func (h *noopHandle) Close(_ context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -138,12 +128,4 @@ func (h *noopHandle) broadcastLocked(e gateway.Event) {
 		default:
 		}
 	}
-}
-
-// Broadcast satisfies the AgentHandle interface for synthetic events from
-// server-side bridges.
-func (h *noopHandle) Broadcast(e gateway.Event) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.broadcastLocked(e)
 }

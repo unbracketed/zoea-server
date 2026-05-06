@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/unbracketed/zoea-server/internal/api"
@@ -42,7 +40,6 @@ func main() {
 		cfg.PiArgs,
 		cfg.SessionsBaseDir,
 		cfg.DefaultWorkingDir,
-		resolvePublicURL(cfg),
 	)
 	sm := session.NewManager(pm, st)
 
@@ -74,28 +71,6 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
-}
-
-// resolvePublicURL returns the URL clients (and capability subprocesses
-// spawned inside Pi) should use to reach this Zoea instance. Honors the
-// explicit ``ZOEA_PUBLIC_URL`` config first; falls back to a best-guess
-// derived from ListenAddr (good enough for local dev where everything's
-// on 127.0.0.1).
-func resolvePublicURL(cfg config.Config) string {
-	if cfg.PublicURL != "" {
-		return strings.TrimRight(cfg.PublicURL, "/")
-	}
-	host, port, err := net.SplitHostPort(cfg.ListenAddr)
-	if err != nil {
-		// ListenAddr is just a port (e.g. ``:8080``); SplitHostPort
-		// returns an error in that case. Treat the addr as the port.
-		port = strings.TrimPrefix(cfg.ListenAddr, ":")
-		host = ""
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	return fmt.Sprintf("http://%s:%s", host, port)
 }
 
 func authModeString(cfg *auth.AuthConfig) string {

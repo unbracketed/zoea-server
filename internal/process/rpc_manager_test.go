@@ -33,7 +33,7 @@ func TestRPCProcessManagerUsesWorkingDirAndAbsoluteSessionDir(t *testing.T) {
 		"sh",
 		pwdFile,
 		argsFile,
-	}, "./sessions", "", "")
+	}, "./sessions", "")
 
 	_, err = pm.Start(context.Background(), StartOptions{SessionID: "s1", UserID: "u1", WorkingDir: workingDir})
 	if err != nil {
@@ -98,7 +98,7 @@ func TestRPCProcessManagerDefaultWorkingDirOverridesRequestWorkingDir(t *testing
 		`printf '%s\n' "$PWD" > "$1"`,
 		"sh",
 		pwdFile,
-	}, "./sessions", defaultWorkingDir, "")
+	}, "./sessions", defaultWorkingDir)
 
 	_, err = pm.Start(context.Background(), StartOptions{SessionID: "s1", UserID: "u1", WorkingDir: requestWorkingDir})
 	if err != nil {
@@ -121,26 +121,6 @@ func waitForFileString(t *testing.T, path string) string {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("read %s: %v", path, err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-// waitForFileContaining is like waitForFileString but keeps polling
-// until the file contains a specific substring. Useful when the
-// subprocess writes its output after a small startup delay so the
-// first read would catch an empty or partial file.
-func waitForFileContaining(t *testing.T, path, needle string) string {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		b, err := os.ReadFile(path)
-		if err == nil && strings.Contains(string(b), needle) {
-			return string(b)
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("file %s never contained %q (last err: %v, last content: %q)",
-				path, needle, err, string(b))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -197,7 +177,7 @@ func TestRPCProcessManagerAddsContinueWhenSessionDirHasTranscript(t *testing.T) 
 		`args_file="$1"; shift; printf '%s\n' "$@" > "$args_file"`,
 		"sh",
 		argsFile,
-	}, sessionsBase, "", "")
+	}, sessionsBase, "")
 
 	_, err = pm.Start(context.Background(), StartOptions{SessionID: "s1", UserID: "u1", WorkingDir: workingDir})
 	if err != nil {
@@ -232,7 +212,7 @@ func TestRPCProcessManagerOmitsContinueForFreshSessionDir(t *testing.T) {
 		`args_file="$1"; shift; printf '%s\n' "$@" > "$args_file"`,
 		"sh",
 		argsFile,
-	}, filepath.Join(root, "sessions"), "", "")
+	}, filepath.Join(root, "sessions"), "")
 
 	_, err = pm.Start(context.Background(), StartOptions{SessionID: "s1", UserID: "u1", WorkingDir: workingDir})
 	if err != nil {
@@ -272,95 +252,3 @@ func containsString(haystack []string, needle string) bool {
 	return false
 }
 
-func TestRPCProcessManagerInjectsBasilA2UIEnv(t *testing.T) {
-	root := t.TempDir()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(cwd) }()
-
-	workingDir := filepath.Join(root, "project")
-	if err := os.MkdirAll(workingDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	envFile := filepath.Join(root, "env.txt")
-	pm := NewRPCProcessManager("sh", []string{
-		"-c",
-		`env > "$1"`,
-		"sh",
-		envFile,
-	}, "./sessions", "", "http://zoea.local:14004")
-
-	_, err = pm.Start(context.Background(), StartOptions{
-		SessionID: "s_unit",
-		UserID:    "u1",
-		WorkingDir: workingDir,
-	})
-	if err != nil {
-		t.Fatalf("start: %v", err)
-	}
-
-	envText := waitForFileContaining(t, envFile, "BASIL_A2UI_TRANSPORT=zoea")
-
-	for _, want := range []string{
-		"BASIL_A2UI_TRANSPORT=zoea",
-		"BASIL_ZOEA_URL=http://zoea.local:14004",
-		"BASIL_ZOEA_SESSION_ID=s_unit",
-	} {
-		if !strings.Contains(envText, want) {
-			t.Errorf("env missing %q\nfull env:\n%s", want, envText)
-		}
-	}
-}
-
-func TestRPCProcessManagerSkipsBasilEnvWhenPublicURLEmpty(t *testing.T) {
-	root := t.TempDir()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(cwd) }()
-
-	workingDir := filepath.Join(root, "project")
-	if err := os.MkdirAll(workingDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	envFile := filepath.Join(root, "env.txt")
-	pm := NewRPCProcessManager("sh", []string{
-		"-c",
-		`env > "$1"`,
-		"sh",
-		envFile,
-	}, "./sessions", "", "")
-
-	_, err = pm.Start(context.Background(), StartOptions{
-		SessionID: "s_unit",
-		UserID:    "u1",
-		WorkingDir: workingDir,
-	})
-	if err != nil {
-		t.Fatalf("start: %v", err)
-	}
-
-	envText := waitForFileContaining(t, envFile, "BASIL_A2UI_TRANSPORT=zoea")
-	// Transport default still injected; URL skipped because we have nowhere
-	// to point it. Session id always tracks the live process.
-	if !strings.Contains(envText, "BASIL_A2UI_TRANSPORT=zoea") {
-		t.Errorf("expected BASIL_A2UI_TRANSPORT=zoea even without publicURL\n%s", envText)
-	}
-	if strings.Contains(envText, "BASIL_ZOEA_URL=") {
-		t.Errorf("BASIL_ZOEA_URL should be absent when publicURL empty\n%s", envText)
-	}
-	if !strings.Contains(envText, "BASIL_ZOEA_SESSION_ID=s_unit") {
-		t.Errorf("expected session id\n%s", envText)
-	}
-}

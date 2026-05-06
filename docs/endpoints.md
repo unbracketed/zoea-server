@@ -26,12 +26,12 @@ Readiness check.
 
 ### `GET /v1/server-info`
 
-Returns the server's configured defaults so clients can scope their behavior to "what this server is currently pointed at." Currently exposes the effective default working-dir; the value is empty when no `DEFAULT_WORKING_DIR` is set.
+Returns the server's configured defaults so clients can scope their behavior to "what this server is currently pointed at." Currently exposes the effective default working-dir; the value is empty when no `ZOEA_WORKING_DIR` is set.
 
 **Response** `200`
 ```json
 {
-  "default_working_dir": "/tmp/brown"
+  "ZOEA_WORKING_DIR": "/tmp/brown"
 }
 ```
 
@@ -61,7 +61,7 @@ Create a new agent session.
 |---|---|---|---|
 | `user_id` | string | yes | Identifies the user |
 | `project_id` | string | no | Optional project context |
-| `working_dir` | string | no | Optional Pi subprocess working directory; Pi session state/history still lives under `SESSIONS_BASE_DIR`. Ignored if server `DEFAULT_WORKING_DIR` is set. |
+| `working_dir` | string | no | Optional Pi subprocess working directory; Pi session state/history still lives under `ZOEA_PI_SESSION_DIR`. Ignored if server `ZOEA_WORKING_DIR` is set. |
 | `external_id` | string | no | Unique external identifier (e.g. for bridge lookup) |
 
 **Response** `201`
@@ -91,7 +91,7 @@ List sessions with optional filters.
 |---|---|---|
 | `user_id` | string | Filter by user |
 | `external_id` | string | Exact match on external ID |
-| `working_dir` | string | Exact match on the resolved working directory the session was created with. Useful for scoping the listing to the server's current `DEFAULT_WORKING_DIR` (see `GET /v1/server-info`). |
+| `working_dir` | string | Exact match on the resolved working directory the session was created with. Useful for scoping the listing to the server's current `ZOEA_WORKING_DIR` (see `GET /v1/server-info`). |
 | `limit` | int | Max results (default 50, max 200) |
 | `offset` | int | Pagination offset (default 0) |
 
@@ -283,7 +283,7 @@ WebSocket endpoint for real-time agent events.
 **Authentication:** Via `Authorization` header on the upgrade request, or `?token=` query parameter for clients that can't set headers (e.g. browsers):
 
 ```
-ws://localhost:8080/v1/sessions/s_000001/stream?token=sk_secret123
+ws://localhost:7777/v1/sessions/s_000001/stream?token=sk_secret123
 ```
 
 #### Server → client events
@@ -296,7 +296,6 @@ Events are JSON frames streamed from the agent. Each event includes a `session_i
 |---|---|
 | `{"type": "abort"}` | Abort the current agent operation |
 | `{"type": "ui_response", "id": "...", ...}` | Respond to a UI prompt from the agent |
-| `{"type": "a2ui.action", "data": {...}}` | Forward an A2UI v0.9 client action — see [A2UI session broker](#a2ui-session-broker) below |
 
 **UI response fields:**
 
@@ -310,164 +309,6 @@ Events are JSON frames streamed from the agent. Each event includes a `session_i
 **Connection behavior:**
 - Server sends WebSocket pings every 20 seconds
 - Connection closes when the session is deleted or the server shuts down
-
----
-
-## A2UI session broker
-
-Zoea brokers [A2UI v0.9](https://a2ui.org/) batches between the agent runtime and a teammate's browser session. The server retains a replayable per-session message history, broadcasts each new batch over the existing session WebSocket, and replays a snapshot to a late subscriber. See [docs/specs/zoea-a2ui-session-broker.md](specs/zoea-a2ui-session-broker.md) for the full design.
-
-**Presentation is client-owned.** The server treats every A2UI message as opaque JSON — it never interprets component semantics. It only validates protocol version, batch size, and (when present) the `createSurface.catalogId` against an allowed catalog list.
-
-Pinned protocol version: `v0.9`. The only catalog accepted today is `https://a2ui.org/specification/v0_9/basic_catalog.json`.
-
-### `POST /v1/sessions/{id}/a2ui/messages`
-
-**Temporary bridge endpoint.** Use for development and integration work until the runtime emits A2UI batches natively. Validates the batch, appends it to the session's retained state, assigns the next `seq`, and broadcasts an `agent.a2ui` event to subscribers.
-
-**Scope:** `sessions.write`
-
-**Request body:**
-```json
-{
-  "messages": [
-    {
-      "version": "v0.9",
-      "createSurface": {
-        "surfaceId": "main",
-        "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
-        "sendDataModel": true
-      }
-    }
-  ]
-}
-```
-
-**Response** `202`
-```json
-{
-  "seq": 1,
-  "message_count": 1
-}
-```
-
-**Errors:**
-
-| Status | Condition |
-|---|---|
-| `400` | Empty batch, malformed message, missing/wrong `version`, or unknown catalog id |
-| `403` | Caller lacks `sessions.write` scope |
-| `404` | Session not found |
-| `413` | Batch too large or session retention buffer would overflow |
-
-Default limits (see [the spec](specs/zoea-a2ui-session-broker.md#validation-rules) for rationale):
-
-| Limit | Default |
-|---|---|
-| Max request body | 256 KB |
-| Max messages per batch | 100 |
-| Max retained messages per session | 2000 |
-
----
-
-### WebSocket event: `agent.a2ui.snapshot`
-
-Sent immediately after WebSocket connect when the session has retained A2UI state. The client should reset its A2UI surface to the snapshot's `messages`, then continue to apply each subsequent `agent.a2ui` batch in `seq` order.
-
-```json
-{
-  "type": "agent.a2ui.snapshot",
-  "session_id": "s_000001",
-  "timestamp": "2026-05-01T12:00:00Z",
-  "data": {
-    "version": "v0.9",
-    "seq": 12,
-    "messages": [
-      {
-        "version": "v0.9",
-        "createSurface": {
-          "surfaceId": "main",
-          "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
-          "sendDataModel": true
-        }
-      }
-    ]
-  }
-}
-```
-
-### WebSocket event: `agent.a2ui`
-
-Sent for each live batch appended to the session.
-
-```json
-{
-  "type": "agent.a2ui",
-  "session_id": "s_000001",
-  "timestamp": "2026-05-01T12:00:02Z",
-  "data": {
-    "version": "v0.9",
-    "seq": 13,
-    "messages": [
-      {
-        "version": "v0.9",
-        "updateComponents": {
-          "surfaceId": "main",
-          "components": []
-        }
-      }
-    ]
-  }
-}
-```
-
-### WebSocket event: `agent.a2ui.error`
-
-Sent in response to a malformed inbound `a2ui.action` frame (see below).
-
-```json
-{
-  "type": "agent.a2ui.error",
-  "session_id": "s_000001",
-  "timestamp": "2026-05-01T12:00:03Z",
-  "data": {
-    "error": "a2ui.action: message.version must be v0.9"
-  }
-}
-```
-
-### Client → server message: `a2ui.action`
-
-Sent by the client to forward a user-initiated A2UI action to the runtime. The server validates protocol shape, then forwards through a process-layer seam. If the runtime does not yet implement A2UI input, an `agent.a2ui.error` event is broadcast.
-
-```json
-{
-  "type": "a2ui.action",
-  "data": {
-    "message": {
-      "version": "v0.9",
-      "action": {
-        "name": "submit",
-        "surfaceId": "main",
-        "sourceComponentId": "submit_btn",
-        "timestamp": "2026-05-01T12:00:05Z",
-        "context": {}
-      }
-    },
-    "client_data_model": {
-      "version": "v0.9",
-      "surfaces": { "main": {} }
-    },
-    "client_capabilities": {
-      "v0.9": {
-        "supportedCatalogIds": [
-          "https://a2ui.org/specification/v0_9/basic_catalog.json"
-        ]
-      }
-    }
-  }
-}
-```
 
 ---
 

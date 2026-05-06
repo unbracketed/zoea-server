@@ -9,7 +9,7 @@ Pi session files remain the source of truth for agent runtime context. The serve
 | Variable | Purpose | Default |
 |---|---|---|
 | `STORE_DRIVER` | Storage backend | `sqlite` |
-| `STORE_DSN` | Database path / connection string | `./.zoea.db` |
+| `ZOEA_STORE_DSN` | Database path / connection string | `./.zoea.db` |
 
 The database file and schema are created automatically on first startup. No manual setup required.
 
@@ -18,10 +18,10 @@ The database file and schema are created automatically on first startup. No manu
 go run ./cmd/server
 
 # Custom location
-STORE_DSN=/var/lib/zoea/data.db go run ./cmd/server
+ZOEA_STORE_DSN=/var/lib/zoea/data.db go run ./cmd/server
 
 # In-memory (testing only, data lost on restart)
-STORE_DSN=":memory:" go run ./cmd/server
+ZOEA_STORE_DSN=":memory:" go run ./cmd/server
 ```
 
 ## What is stored
@@ -105,7 +105,7 @@ Convention for bridge external IDs: `platform:platform_id` (e.g. `telegram:98765
 
 ## Message persistence
 
-Pi owns the transcript on disk. Each Zoea session gets its own session-dir under `SESSIONS_BASE_DIR/<user>/<session-id>/`, which the server passes to Pi as `--session-dir`. Pi writes a JSONL file there as the conversation progresses; on resume, the server re-spawns Pi with `--continue` so Pi loads the most recent JSONL in that dir and threads new turns onto it.
+Pi owns the transcript on disk. Each Zoea session gets its own session-dir under `ZOEA_PI_SESSION_DIR/<user>/<session-id>/`, which the server passes to Pi as `--session-dir`. Pi writes a JSONL file there as the conversation progresses; on resume, the server re-spawns Pi with `--continue` so Pi loads the most recent JSONL in that dir and threads new turns onto it.
 
 The server only updates `last_active_at` on `agent.run.end`; it does not mirror messages into SQLite. The legacy `session_messages` table still exists for backwards compatibility but is no longer written to — earlier versions of the server mirrored Pi's transcript into SQLite, but that mirror was destructive on resume (Pi could legitimately have a shorter transcript than the prior run, which would erase history). With Pi as the single source of truth, that conflict goes away.
 
@@ -134,16 +134,16 @@ Deleting a session (`DELETE /v1/sessions/{id}`) removes both the session row and
 
 ```bash
 # All sessions
-curl localhost:8080/v1/sessions
+curl localhost:7777/v1/sessions
 
 # Filter by user
-curl "localhost:8080/v1/sessions?user_id=alice"
+curl "localhost:7777/v1/sessions?user_id=alice"
 
 # Find by external ID
-curl "localhost:8080/v1/sessions?external_id=telegram:12345"
+curl "localhost:7777/v1/sessions?external_id=telegram:12345"
 
 # Paginate
-curl "localhost:8080/v1/sessions?limit=10&offset=20"
+curl "localhost:7777/v1/sessions?limit=10&offset=20"
 ```
 
 See [API Endpoints](endpoints.md) for full request/response details.

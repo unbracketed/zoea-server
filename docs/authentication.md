@@ -47,7 +47,7 @@ AUTH_API_KEYS="telegram-bot:sk_abc123:sessions.read,sessions.write;dashboard:sk_
 Pass the key as a Bearer token in the `Authorization` header:
 
 ```bash
-curl http://localhost:8080/v1/sessions \
+curl http://localhost:7777/v1/sessions \
   -H "Authorization: Bearer sk_abc123" \
   -H "Content-Type: application/json" \
   -d '{"user_id": "alice"}'
@@ -56,7 +56,7 @@ curl http://localhost:8080/v1/sessions \
 For WebSocket connections where headers can't be set (browsers), use the `?token=` query parameter:
 
 ```
-ws://localhost:8080/v1/sessions/s_000001/stream?token=sk_abc123
+ws://localhost:7777/v1/sessions/s_000001/stream?token=sk_abc123
 ```
 
 ### Key comparison
@@ -70,7 +70,7 @@ Each API key has one or more scopes that control which endpoints it can access.
 | Scope | Permissions |
 |---|---|
 | `sessions.read` | Get state, get messages, list sessions, stream events |
-| `sessions.write` | Create sessions, send prompts, abort, delete, inject A2UI batches |
+| `sessions.write` | Create sessions, send prompts, abort, delete |
 | `admin` | Superset — grants all permissions |
 
 ### Endpoint scope requirements
@@ -86,7 +86,6 @@ Each API key has one or more scopes that control which endpoints it can access.
 | `POST /v1/sessions/{id}/abort` | `sessions.write` |
 | `GET /v1/sessions/{id}/stream` | `sessions.read` |
 | `DELETE /v1/sessions/{id}` | `sessions.write` |
-| `POST /v1/sessions/{id}/a2ui/messages` | `sessions.write` |
 
 A request with valid credentials but insufficient scope receives `403 Forbidden`:
 

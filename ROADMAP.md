@@ -138,7 +138,7 @@ CREATE INDEX idx_messages_session ON session_messages(session_id);
 - On `agent.run.end`, messages are persisted to `session_messages` via background listener
 - `GET /v1/sessions` list endpoint (paginated, filtered by `user_id` and `external_id`)
 - `POST /v1/sessions` accepts `external_id` for bridge session lookup
-- Config: `STORE_DRIVER` (default `sqlite`), `STORE_DSN` (default `./.zoea.db`)
+- Config: `STORE_DRIVER` (default `sqlite`), `ZOEA_STORE_DSN` (default `./.zoea.db`)
 
 ---
 

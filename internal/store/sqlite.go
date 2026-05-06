@@ -73,7 +73,7 @@ func OpenSQLite(dsn string) (*SQLiteStore, error) {
 }
 
 // ensureParentDir creates the parent directory of a sqlite file DSN. SQLite refuses
-// to create missing parent directories — without this, a fresh STORE_DSN pointing at
+// to create missing parent directories — without this, a fresh ZOEA_STORE_DSN pointing at
 // a not-yet-created path fails with "unable to open database file".
 func ensureParentDir(dsn string) error {
 	path := dsn

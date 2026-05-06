@@ -172,7 +172,7 @@ type Store interface {
 
 Add store config:
 - `STORE_DRIVER` (default `sqlite`)
-- `STORE_DSN` (default `./.zoea.db`)
+- `ZOEA_STORE_DSN` (default `./.zoea.db`)
 
 ### 3) `cmd/server/main.go`
 

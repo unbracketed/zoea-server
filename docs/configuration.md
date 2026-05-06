@@ -4,18 +4,17 @@ All configuration is done via environment variables. The defaults are intended t
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ZOEA_LISTEN_ADDR` | Listen address | `:8080` |
-| `ZOEA_LISTEN_PORT` | Listen port shorthand | empty |
+| `ZOEA_LISTEN_ADDR` | Listen address | `:7777` |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
 | `PI_DEFAULT_ARGS` | Default args for `pi` subprocess | `--mode rpc` |
-| `SESSIONS_BASE_DIR` | Base directory for Pi session state/history | `./.zoea-sessions` |
-| `DEFAULT_WORKING_DIR` | Default working directory for all Pi subprocesses | empty |
+| `ZOEA_PI_SESSION_DIR` | Base directory for Pi session state/history | `./.zoea-sessions` |
+| `ZOEA_WORKING_DIR` | Default working directory for all Pi subprocesses | empty |
 | `AUTH_API_KEYS` | API keys for auth (enables auth) | empty |
 | `ZOEA_BEHIND_PROXY` | Treat all connections as remote | empty |
 | `STORE_DRIVER` | Storage backend | `sqlite` |
-| `STORE_DSN` | Database path / connection string | `./.zoea.db` |
+| `ZOEA_STORE_DSN` | Database path / connection string | `./.zoea.db` |
 
-If `DEFAULT_WORKING_DIR` is set, every Pi subprocess starts there. Pi session state/history still lives under `SESSIONS_BASE_DIR`. Per-request `working_dir` values are ignored while `DEFAULT_WORKING_DIR` is set.
+If `ZOEA_WORKING_DIR` is set, every Pi subprocess starts there. Pi session state/history still lives under `ZOEA_PI_SESSION_DIR`. Per-request `working_dir` values are ignored while `ZOEA_WORKING_DIR` is set.
 
 ## Storage
 
@@ -23,7 +22,7 @@ Session metadata and message history are persisted to a SQLite database by defau
 
 ```bash
 # Custom database location
-STORE_DSN=/var/lib/zoea/sessions.db go run ./cmd/server
+ZOEA_STORE_DSN=/var/lib/zoea/sessions.db go run ./cmd/server
 ```
 
 ## Example

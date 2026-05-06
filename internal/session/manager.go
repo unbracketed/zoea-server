@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/unbracketed/zoea-server/internal/a2ui"
 	"github.com/unbracketed/zoea-server/internal/gateway"
 	"github.com/unbracketed/zoea-server/internal/process"
 	"github.com/unbracketed/zoea-server/internal/store"
@@ -38,12 +37,11 @@ type ListQuery struct {
 }
 
 type Manager struct {
-	mu        sync.RWMutex
-	counter   uint64
-	handles   map[string]process.AgentHandle // runtime handles only
-	pm        process.Manager
-	store     store.Store
-	a2uiState *a2ui.State
+	mu      sync.RWMutex
+	counter uint64
+	handles map[string]process.AgentHandle // runtime handles only
+	pm      process.Manager
+	store   store.Store
 }
 
 func NewManager(pm process.Manager, st store.Store) *Manager {
@@ -52,58 +50,6 @@ func NewManager(pm process.Manager, st store.Store) *Manager {
 		pm:      pm,
 		store:   st,
 	}
-}
-
-// AttachA2UIState wires the broker so the manager can fall back to the
-// session's most recent assistant responseId when an A2UI inject
-// arrives without an explicit message_id. Must be called before Create
-// for the per-session tracker goroutine to start.
-func (m *Manager) AttachA2UIState(state *a2ui.State) {
-	m.a2uiState = state
-}
-
-// trackResponseIDsForA2UI subscribes to the session's gateway stream
-// and records the latest assistant responseId on every agent.message.*
-// event. This is best-effort: if the message JSON has no responseId
-// (e.g. older Pi build), we just skip it and the broker keeps its
-// previous value.
-func (m *Manager) trackResponseIDsForA2UI(sessionID string, h process.AgentHandle) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	events, unsub := h.Subscribe(ctx)
-	defer unsub()
-
-	for evt := range events {
-		switch evt.Type {
-		case "agent.message.start", "agent.message.end":
-		default:
-			continue
-		}
-		id := extractResponseID(evt)
-		if id != "" {
-			m.a2uiState.RecordLatestResponseID(sessionID, id)
-		}
-	}
-}
-
-// extractResponseID pulls responseId out of a MessageStart/End data
-// payload. The data field is opaque from the rpc mapper's perspective,
-// so we re-marshal and probe.
-func extractResponseID(evt gateway.Event) string {
-	b, err := json.Marshal(evt.Data)
-	if err != nil {
-		return ""
-	}
-	var probe struct {
-		Message struct {
-			ResponseID string `json:"responseId"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal(b, &probe); err != nil {
-		return ""
-	}
-	return probe.Message.ResponseID
 }
 
 // Init seeds the counter from persisted sessions.
@@ -185,12 +131,6 @@ func (m *Manager) Create(ctx context.Context, userID, projectID, externalID, wor
 
 	// Start background message persistence listener.
 	go m.bumpLastActiveOnRunEnd(sid, h)
-	// Watch the same gateway stream for assistant responseIds so the
-	// A2UI broker can fall back to "latest assistant turn" when an
-	// inject arrives without an explicit message_id.
-	if m.a2uiState != nil {
-		go m.trackResponseIDsForA2UI(sid, h)
-	}
 
 	return s, nil
 }
@@ -269,9 +209,6 @@ func (m *Manager) Resume(ctx context.Context, sessionID string) (*Session, error
 	_ = m.store.UpdateSessionActivity(ctx, sessionID, now)
 
 	go m.bumpLastActiveOnRunEnd(sessionID, h)
-	if m.a2uiState != nil {
-		go m.trackResponseIDsForA2UI(sessionID, h)
-	}
 
 	return &Session{
 		ID:         rec.ID,
@@ -350,22 +287,6 @@ func (s *Session) Subscribe(ctx context.Context) (<-chan gateway.Event, func()) 
 func (s *Session) SendUIResponse(ctx context.Context, resp process.UIResponse) error {
 	s.LastActive = time.Now().UTC()
 	return s.handle.SendUIResponse(ctx, resp)
-}
-
-// SendA2UIAction forwards an A2UI v0.9 client action to the underlying agent
-// runtime. Returns process.ErrA2UIUnsupported when the runtime hasn't
-// implemented A2UI input.
-func (s *Session) SendA2UIAction(ctx context.Context, req process.A2UIActionRequest) error {
-	s.LastActive = time.Now().UTC()
-	return s.handle.SendA2UIAction(ctx, req)
-}
-
-// Broadcast pushes a synthetic event to all current WS subscribers of this
-// session. Used by server-side bridges (e.g. the A2UI broker) that need to
-// inject events without going through the agent process.
-func (s *Session) Broadcast(event gateway.Event) {
-	s.LastActive = time.Now().UTC()
-	s.handle.Broadcast(event)
 }
 
 // bumpLastActiveOnRunEnd watches for agent.run.end events and updates the

@@ -25,25 +25,18 @@ type RPCProcessManager struct {
 	baseArgs          []string
 	sessionsBaseDir   string
 	defaultWorkingDir string
-	// publicURL is the URL clients (and BASIL subprocesses spawned
-	// inside Pi) should use to reach this Zoea server. Injected into
-	// each Pi process's env as BASIL_ZOEA_URL so basil-a2ui-flow
-	// invocations from Pi tool calls can post A2UI batches back here
-	// without per-project config.
-	publicURL string
 }
 
-func NewRPCProcessManager(binPath string, baseArgs []string, sessionsBaseDir string, defaultWorkingDir string, publicURL string) *RPCProcessManager {
+func NewRPCProcessManager(binPath string, baseArgs []string, sessionsBaseDir string, defaultWorkingDir string) *RPCProcessManager {
 	return &RPCProcessManager{
 		binPath:           binPath,
 		baseArgs:          append([]string{}, baseArgs...),
 		sessionsBaseDir:   sessionsBaseDir,
 		defaultWorkingDir: strings.TrimSpace(defaultWorkingDir),
-		publicURL:         strings.TrimSpace(publicURL),
 	}
 }
 
-// ResolveWorkingDir applies the precedence DEFAULT_WORKING_DIR > opts.WorkingDir
+// ResolveWorkingDir applies the precedence ZOEA_WORKING_DIR > opts.WorkingDir
 // and returns an absolute, validated directory path. Exposed via the Manager
 // interface so session.Manager can persist the resolved value before spawning.
 func (m *RPCProcessManager) ResolveWorkingDir(opts StartOptions) (string, error) {
@@ -116,7 +109,6 @@ func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHa
 
 	cmd := exec.Command(m.binPath, args...)
 	cmd.Dir = workingDir
-	cmd.Env = m.buildPiEnv(opts)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -148,49 +140,6 @@ func (m *RPCProcessManager) Start(_ context.Context, opts StartOptions) (AgentHa
 	go h.waitLoop()
 
 	return h, nil
-}
-
-// buildPiEnv composes the env passed to the Pi subprocess and to any
-// capability subprocesses Pi later spawns (basil-a2ui-flow, etc.).
-//
-// We inject A2UI wiring so a fresh BASIL install in the Pi process's
-// working dir doesn't need a hand-edited ``.basil/config.json`` to
-// route browser-side forms back through this Zoea server. The agent
-// can call ``basil_agent_forms_prompt`` and the form just appears in
-// the user's browser tab — that's the whole closed-loop experience
-// from the user's point of view.
-//
-// Existing values in the parent env win, so an operator who sets
-// BASIL_A2UI_TRANSPORT=file (or similar) for a specific Pi instance
-// can still do so without us clobbering it.
-func (m *RPCProcessManager) buildPiEnv(opts StartOptions) []string {
-	parent := os.Environ()
-	have := func(prefix string) bool {
-		for _, kv := range parent {
-			if strings.HasPrefix(kv, prefix) {
-				return true
-			}
-		}
-		return false
-	}
-
-	env := append([]string(nil), parent...)
-
-	// Default the BASIL transport to ``zoea`` for any Pi process this
-	// server spawns; that's the only sensible value when the agent's
-	// browser is the rendering surface.
-	if !have("BASIL_A2UI_TRANSPORT=") {
-		env = append(env, "BASIL_A2UI_TRANSPORT=zoea")
-	}
-	if m.publicURL != "" && !have("BASIL_ZOEA_URL=") {
-		env = append(env, "BASIL_ZOEA_URL="+m.publicURL)
-	}
-	// Session id always tracks the active Pi process — even if the
-	// caller pinned other vars, this one must match the running session.
-	if strings.TrimSpace(opts.SessionID) != "" {
-		env = append(env, "BASIL_ZOEA_SESSION_ID="+opts.SessionID)
-	}
-	return env
 }
 
 // sessionDirHasTranscript reports whether the given Pi session-dir holds
@@ -391,34 +340,6 @@ func (h *rpcHandle) SendUIResponse(_ context.Context, resp UIResponse) error {
 	return err
 }
 
-// SendA2UIAction forwards an A2UI v0.9 client action to the Pi runtime
-// via the same JSON-line RPC protocol used for prompts.
-//
-// The current Pi runtime does not yet implement an "a2ui_action" handler,
-// so a real send will surface as an error from sendCommand. We map any
-// such error to ErrA2UIUnsupported so the HTTP/WS layer can return a
-// stable "not supported" frame rather than leaking runtime-specific
-// wording. Once Pi gains native support, the runtime will return
-// success and this method becomes a transparent forwarder.
-func (h *rpcHandle) SendA2UIAction(ctx context.Context, req A2UIActionRequest) error {
-	payload := map[string]any{
-		"type": "a2ui_action",
-	}
-	if len(req.Message) > 0 {
-		payload["message"] = req.Message
-	}
-	if len(req.ClientDataModel) > 0 {
-		payload["client_data_model"] = req.ClientDataModel
-	}
-	if len(req.ClientCapabilities) > 0 {
-		payload["client_capabilities"] = req.ClientCapabilities
-	}
-	if _, err := h.sendCommand(ctx, payload); err != nil {
-		return fmt.Errorf("%w: %v", ErrA2UIUnsupported, err)
-	}
-	return nil
-}
-
 func (h *rpcHandle) Subscribe(ctx context.Context) (<-chan gateway.Event, func()) {
 	h.mu.Lock()
 	h.nextSubID++
@@ -604,8 +525,3 @@ func (h *rpcHandle) broadcastGatewayEvent(e gateway.Event) {
 	}
 }
 
-// Broadcast satisfies the AgentHandle interface and lets server-side bridges
-// (e.g. the A2UI broker) inject synthetic events into the existing WS stream.
-func (h *rpcHandle) Broadcast(e gateway.Event) {
-	h.broadcastGatewayEvent(e)
-}

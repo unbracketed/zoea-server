@@ -88,10 +88,6 @@ func (recordingHandle) Subscribe(context.Context) (<-chan gateway.Event, func())
 	return ch, func() {}
 }
 func (recordingHandle) SendUIResponse(context.Context, process.UIResponse) error { return nil }
-func (recordingHandle) SendA2UIAction(context.Context, process.A2UIActionRequest) error {
-	return nil
-}
-func (recordingHandle) Broadcast(gateway.Event)     {}
 func (recordingHandle) Close(context.Context) error { return nil }
 
 func adminCtx(r *http.Request) *http.Request {

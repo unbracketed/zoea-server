@@ -8,19 +8,19 @@ HTTP/WebSocket server that bridges clients to `pi --mode rpc` agent subprocesses
 go run ./cmd/server
 ```
 
-No config needed for local dev. The server starts on `:8080` with full access from localhost.
+No config needed for local dev. The server starts on `:7777` with full access from localhost.
 
 ```bash
 # Create a session
-curl -s localhost:8080/v1/sessions -H "Content-Type: application/json" \
+curl -s localhost:7777/v1/sessions -H "Content-Type: application/json" \
   -d '{"user_id": "me"}' | jq
 
 # Send a prompt
-curl -s localhost:8080/v1/sessions/s_000001/messages -H "Content-Type: application/json" \
+curl -s localhost:7777/v1/sessions/s_000001/messages -H "Content-Type: application/json" \
   -d '{"message": "Hello"}' | jq
 
 # Stream events
-npx wscat -c ws://localhost:8080/v1/sessions/s_000001/stream
+npx wscat -c ws://localhost:7777/v1/sessions/s_000001/stream
 ```
 
 ## With auth
@@ -45,7 +45,6 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 | `POST` | `/v1/sessions/{id}/abort` | `sessions.write` | Abort operation |
 | `GET` | `/v1/sessions/{id}/stream` | `sessions.read` | WebSocket event stream |
 | `DELETE` | `/v1/sessions/{id}` | `sessions.write` | Delete session |
-| `POST` | `/v1/sessions/{id}/a2ui/messages` | `sessions.write` | Inject an A2UI v0.9 batch (temporary bridge endpoint) |
 
 ## Documentation
 
@@ -59,23 +58,18 @@ Then pass `Authorization: Bearer sk_secret` on all requests.
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `ZOEA_LISTEN_ADDR` | Listen address | `:8080` |
-| `ZOEA_LISTEN_PORT` | Listen port shorthand | empty |
+| `ZOEA_LISTEN_ADDR` | Listen address | `:7777` |
 | `PI_BIN_PATH` | Path to `pi` binary | `pi` |
 | `PI_DEFAULT_ARGS` | Default args for pi subprocess | `--mode rpc` |
-| `SESSIONS_BASE_DIR` | Base directory for Pi session state/history | `./.zoea-sessions` |
-| `DEFAULT_WORKING_DIR` | Default working directory for all Pi subprocesses | empty |
+| `ZOEA_PI_SESSION_DIR` | Base directory for Pi session state/history | `./.zoea-sessions` |
+| `ZOEA_WORKING_DIR` | Default working directory for all Pi subprocesses | empty |
 | `AUTH_API_KEYS` | API keys (enables auth) | empty |
 | `ZOEA_BEHIND_PROXY` | Treat all connections as remote | empty |
 | `STORE_DRIVER` | Storage backend | `sqlite` |
-| `STORE_DSN` | Database path / connection string | `./.zoea.db` |
+| `ZOEA_STORE_DSN` | Database path / connection string | `./.zoea.db` |
 
 ## Tests
 
 ```bash
 go test ./...
 ```
-
-
-## exe.dev
-
