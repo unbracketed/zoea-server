@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,6 +54,9 @@ func OpenSQLite(dsn string) (*SQLiteStore, error) {
 	if strings.TrimSpace(dsn) == "" {
 		dsn = "./.zoea.db"
 	}
+	if err := ensureParentDir(dsn); err != nil {
+		return nil, err
+	}
 	// Apply pragmas per connection via DSN so they persist across the connection pool.
 	// busy_timeout makes concurrent readers/writers wait up to 5s instead of failing
 	// immediately with SQLITE_BUSY.
@@ -65,6 +70,28 @@ func OpenSQLite(dsn string) (*SQLiteStore, error) {
 	// holding multiple writer connections can amplify SQLITE_BUSY contention.
 	db.SetMaxOpenConns(1)
 	return &SQLiteStore{db: db}, nil
+}
+
+// ensureParentDir creates the parent directory of a sqlite file DSN. SQLite refuses
+// to create missing parent directories — without this, a fresh STORE_DSN pointing at
+// a not-yet-created path fails with "unable to open database file".
+func ensureParentDir(dsn string) error {
+	path := dsn
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	path = strings.TrimPrefix(path, "file:")
+	if path == "" || path == ":memory:" {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	if dir == "" || dir == "." {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create sqlite dir %q: %w", dir, err)
+	}
+	return nil
 }
 
 func appendPragma(dsn, pragma string) string {
