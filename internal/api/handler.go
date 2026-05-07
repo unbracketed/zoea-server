@@ -186,6 +186,10 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) > 1 {
 		action = parts[1]
 	}
+	actionTail := ""
+	if len(parts) > 2 {
+		actionTail = strings.Join(parts[2:], "/")
+	}
 
 	// Delete doesn't require a live handle — allow deleting store-only records.
 	if action == "" && r.Method == http.MethodDelete {
@@ -320,6 +324,10 @@ func (h *Handler) handleSessionByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleSessionStream(w, r, sessionID, s)
+		return
+
+	case action == "artifacts":
+		h.handleArtifactRequest(w, r, s, actionTail)
 		return
 
 	default:
