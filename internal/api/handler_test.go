@@ -53,7 +53,7 @@ func newTestHandlerWithPM(t *testing.T, pm process.Manager) (*Handler, *session.
 	if err := sm.Init(context.Background()); err != nil {
 		t.Fatalf("init sessions: %v", err)
 	}
-	return NewHandler(sm, ""), sm, st
+	return NewHandler(sm, "", nil), sm, st
 }
 
 type recordingProcessManager struct {
@@ -277,7 +277,7 @@ func TestResumeAfterRestartSpawnsHandle(t *testing.T) {
 	if err := sm2.Init(context.Background()); err != nil {
 		t.Fatalf("init sm2: %v", err)
 	}
-	h := NewHandler(sm2, "")
+	h := NewHandler(sm2, "", nil)
 
 	// Pre-resume: Get must report not-found, mirroring what the web UI
 	// previously hit when clicking an old session.

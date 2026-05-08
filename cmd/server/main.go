@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/unbracketed/zoea-server/internal/api"
 	"github.com/unbracketed/zoea-server/internal/auth"
 	"github.com/unbracketed/zoea-server/internal/config"
+	"github.com/unbracketed/zoea-server/internal/introspect"
 	"github.com/unbracketed/zoea-server/internal/process"
 	"github.com/unbracketed/zoea-server/internal/session"
 	"github.com/unbracketed/zoea-server/internal/store"
@@ -47,7 +49,22 @@ func main() {
 		log.Fatalf("init session manager: %v", err)
 	}
 
-	h := api.NewHandler(sm, cfg.DefaultWorkingDir)
+	// Boot-time introspection: spawn one Pi to capture the set of slash
+	// commands and tools available for cfg.DefaultWorkingDir. Failures are
+	// non-fatal — the server runs in degraded mode (clients see
+	// available:false on /v1/config, autocomplete and the settings panel
+	// stay empty). Bounded so a wedged Pi can't block startup.
+	introspectCtx, cancelIntrospect := context.WithTimeout(context.Background(), 30*time.Second)
+	piConfig, err := introspect.Run(introspectCtx, pm, cfg.DefaultWorkingDir)
+	cancelIntrospect()
+	if err != nil {
+		log.Printf("zoea-server: boot-time introspection failed: %v", err)
+		piConfig = nil
+	} else {
+		log.Printf("zoea-server: introspection captured %d commands, %d tools", len(piConfig.Commands), len(piConfig.Tools))
+	}
+
+	h := api.NewHandler(sm, cfg.DefaultWorkingDir, piConfig)
 
 	// Build middleware chain: rate limit → auth → routes
 	var handler http.Handler = h.Routes()

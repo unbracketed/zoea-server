@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/unbracketed/zoea-server/internal/auth"
+	"github.com/unbracketed/zoea-server/internal/introspect"
 	"github.com/unbracketed/zoea-server/internal/process"
 	"github.com/unbracketed/zoea-server/internal/session"
 	"github.com/unbracketed/zoea-server/internal/store"
@@ -19,6 +20,7 @@ import (
 type Handler struct {
 	sessions          *session.Manager
 	defaultWorkingDir string
+	config            *introspect.Config
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -28,10 +30,11 @@ var wsUpgrader = websocket.Upgrader{
 	},
 }
 
-func NewHandler(sm *session.Manager, defaultWorkingDir string) *Handler {
+func NewHandler(sm *session.Manager, defaultWorkingDir string, cfg *introspect.Config) *Handler {
 	return &Handler{
 		sessions:          sm,
 		defaultWorkingDir: defaultWorkingDir,
+		config:            cfg,
 	}
 }
 
@@ -40,9 +43,35 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/healthz", h.handleHealth)
 	mux.HandleFunc("/readyz", h.handleReady)
 	mux.HandleFunc("/v1/server-info", h.handleServerInfo)
+	mux.HandleFunc("/v1/config", h.handleConfig)
 	mux.HandleFunc("/v1/sessions", h.handleSessions)
 	mux.HandleFunc("/v1/sessions/", h.handleSessionByID)
 	return mux
+}
+
+// handleConfig returns the boot-time snapshot of Pi's registered slash
+// commands and tools. Available is false when introspection failed at
+// startup; clients should degrade (no autocomplete, empty settings panel)
+// rather than treat it as fatal.
+func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if h.config == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"available": false,
+			"commands":  []any{},
+			"tools":     []any{},
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"available":   true,
+		"captured_at": h.config.CapturedAt.Format(time.RFC3339Nano),
+		"commands":    h.config.Commands,
+		"tools":       h.config.Tools,
+	})
 }
 
 // handleServerInfo exposes the server's effective default working-dir so
